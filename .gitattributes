@@ -1,0 +1,9 @@
+# Keep development-only files out of the Composer dist archive. Packagist
+# installs use GitHub's zipball, which honours export-ignore.
+/tests               export-ignore
+/docs                export-ignore
+/.github             export-ignore
+/.gitattributes      export-ignore
+/codeception.yml     export-ignore
+/docker-compose.yml  export-ignore
+/composer.lock       export-ignore

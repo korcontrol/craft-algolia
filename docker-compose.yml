@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: craft_algolia_test
+      POSTGRES_USER: craft_algolia_test
+      POSTGRES_PASSWORD: craft_algolia_test
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

@@ -1,0 +1,11 @@
+name: lint
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    container: php:8.2-cli
+    steps:
+      - uses: actions/checkout@v4
+      - run: find src -name "*.php" -exec php -l {} \;

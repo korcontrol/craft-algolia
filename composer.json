@@ -1,0 +1,41 @@
+{
+    "name": "korcontrol/craft-algolia",
+    "description": "Algolia search integration plugin for Craft CMS 5",
+    "type": "craft-plugin",
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "craftcms/cms": "^5.0",
+        "algolia/algoliasearch-client-php": "^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "korcontrol\\craftalgolia\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "korcontrol\\craftalgolia\\tests\\": "tests/"
+        }
+    },
+    "require-dev": {
+        "codeception/codeception": "^5",
+        "codeception/module-asserts": "^3",
+        "codeception/module-filesystem": "^3",
+        "codeception/module-yii2": "^1",
+        "craftcms/craft": "^5.0"
+    },
+    "extra": {
+        "handle": "craft-algolia",
+        "name": "Algolia Integration",
+        "developer": "Kor Control",
+        "documentationUrl": "https://github.com/korcontrol/craft-algolia#readme",
+        "class": "korcontrol\\craftalgolia\\Plugin"
+    },
+    "config": {
+        "allow-plugins": {
+            "yiisoft/yii2-composer": true,
+            "craftcms/plugin-installer": true
+        }
+    }
+}
