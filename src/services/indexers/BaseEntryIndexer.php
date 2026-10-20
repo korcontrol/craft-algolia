@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace korcontrol\craftalgolia\services\indexers;
 
-use Craft;
 use craft\base\Element;
 use craft\elements\Entry;
 
@@ -40,12 +39,25 @@ abstract class BaseEntryIndexer implements ElementIndexerInterface
         return true;
     }
 
+    /**
+     * Whether the entry's field layout has a field with this handle.
+     *
+     * Handles are layout handles, which may differ from the field's global
+     * handle (Craft 5 per-layout handle overrides).
+     */
+    protected function hasField(Entry $entry, string $fieldHandle): bool
+    {
+        return $entry->getFieldLayout()?->getFieldByHandle($fieldHandle) !== null;
+    }
+
     protected function getSearchKeywordsForField(
         Entry $entry,
         string $fieldHandle
     ): string {
-        $fieldsService = Craft::$app->getFields();
-        $field = $fieldsService->getFieldByHandle($fieldHandle);
+        // Resolve via the entry's field layout so per-layout handle overrides
+        // (Craft 5 multi-instance fields) work, matching getFieldValue() below.
+        // The global Fields service only knows global handles.
+        $field = $entry->getFieldLayout()?->getFieldByHandle($fieldHandle);
 
         if ($field === null) {
             return '';
@@ -60,9 +72,14 @@ abstract class BaseEntryIndexer implements ElementIndexerInterface
 
     protected function toPlainText(string $html): string
     {
-        $text = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        // Replace tags with a space so text in adjacent elements doesn't run
+        // together (e.g. "</h2><p>" would otherwise join two words)
+        $text = preg_replace('/<[^>]*>/', ' ', $html) ?? $html;
+        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $text = strip_tags($text);
         $text = str_replace("\xC2\xA0", ' ', $text);
+        // Soft hyphens (often pasted from design files/PDFs) split words invisibly
+        $text = str_replace("\u{00AD}", '', $text);
         $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
         return trim($text);
     }

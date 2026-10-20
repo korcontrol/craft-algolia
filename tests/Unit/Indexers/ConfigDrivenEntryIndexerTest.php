@@ -23,6 +23,7 @@ class ConfigDrivenEntryIndexerTest extends IndexerTestCase
         ?\DateTime $postDate = null,
         array $fieldValues = [],
         bool $hasSearchableField = false,
+        ?array $layoutFields = null,
     ): Entry {
         $section = new Section();
         $section->handle = $sectionHandle;
@@ -34,6 +35,12 @@ class ConfigDrivenEntryIndexerTest extends IndexerTestCase
         $site = new Site();
         $site->language = $siteLanguage;
 
+        // By default the layout has a field for every value given
+        $layout = $this->makeFieldLayout(
+            $hasSearchableField,
+            $layoutFields ?? $this->layoutFieldsFor($fieldValues),
+        );
+
         return $this->make(Entry::class, [
             'id'             => $id,
             'title'          => $title,
@@ -42,9 +49,9 @@ class ConfigDrivenEntryIndexerTest extends IndexerTestCase
             'getSection'     => $section,
             'getType'        => $entryType,
             'getSite'        => $site,
-            'getFieldLayout' => $this->makeFieldLayout($hasSearchableField),
+            'getFieldLayout' => $layout,
             'getUrl'         => $url,
-            'getFieldValue'  => fn(string $handle) => $fieldValues[$handle] ?? null,
+            'getFieldValue'  => $this->fieldValueGetter($layout, $fieldValues),
         ]);
     }
 
@@ -195,5 +202,116 @@ class ConfigDrivenEntryIndexerTest extends IndexerTestCase
 
         $this->assertSame($customDate->getTimestamp(), $data['filterDate']);
         $this->assertSame(2025, $data['filterYear']);
+    }
+
+    public function test_custom_date_field_missing_from_layout_gives_null_filter_date(): void
+    {
+        $entry = $this->makeEntry(layoutFields: []);
+
+        $data = (new ConfigDrivenEntryIndexer('news', [
+            'dateField' => 'eventDate',
+        ]))->getIndexData($entry);
+
+        $this->assertNull($data['filterDate']);
+        $this->assertNull($data['filterYear']);
+    }
+
+    // Body fields (search mode) — layout handles
+
+    public function test_body_uses_layout_handle_override(): void
+    {
+        // An `editorComponents` field added to the layout with the handle `body`:
+        // only the layout handle resolves on the entry.
+        $entry = $this->makeEntry(
+            fieldValues: ['body' => 'value'],
+            layoutFields: ['body' => $this->makeKeywordsField('body', 'Body keywords')],
+        );
+
+        $data = (new ConfigDrivenEntryIndexer('news', [
+            'bodyFields' => ['body'],
+        ]))->getIndexData($entry);
+
+        $this->assertSame('Body keywords', $data['body']);
+    }
+
+    public function test_body_field_not_on_layout_is_skipped_without_error(): void
+    {
+        // The global handle of an overridden field isn't on the layout, so
+        // getFieldValue() would throw; it must be skipped instead.
+        $entry = $this->makeEntry(
+            fieldValues: ['body' => 'value'],
+            layoutFields: ['body' => $this->makeKeywordsField('body', 'Body keywords')],
+        );
+
+        $data = (new ConfigDrivenEntryIndexer('news', [
+            'bodyFields' => ['editorComponents', 'body'],
+        ]))->getIndexData($entry);
+
+        $this->assertSame('Body keywords', $data['body']);
+    }
+
+    // Body fields (plaintext mode)
+
+    public function test_plaintext_body_field_not_on_layout_is_skipped_without_error(): void
+    {
+        $entry = $this->makeEntry(fieldValues: ['summary' => 'A summary']);
+
+        $data = (new ConfigDrivenEntryIndexer('news', [
+            'bodyFields' => ['missing', 'summary'],
+            'bodyMode'   => 'plaintext',
+        ]))->getIndexData($entry);
+
+        $this->assertSame('A summary', $data['body']);
+    }
+
+    // Extra fields
+
+    public function test_extra_field_not_on_layout_is_skipped_without_error(): void
+    {
+        $entry = $this->makeEntry(fieldValues: ['cisionId' => '12345']);
+
+        $data = (new ConfigDrivenEntryIndexer('news', [
+            'extraFields' => [
+                'cisionId' => 'cisionId',
+                'missing'  => 'missing',
+            ],
+        ]))->getIndexData($entry);
+
+        $this->assertSame('12345', $data['cisionId']);
+        $this->assertArrayNotHasKey('missing', $data);
+    }
+
+    // Plain text conversion
+
+    public function test_body_text_from_adjacent_elements_does_not_run_together(): void
+    {
+        $entry = $this->makeEntry(
+            fieldValues: ['body' => 'value'],
+            layoutFields: [
+                'body' => $this->makeKeywordsField('body', '<h2>Headline 1</h2><h2>Headline 2</h2><p>First.</p><p>Second</p>'),
+            ],
+        );
+
+        $data = (new ConfigDrivenEntryIndexer('news', [
+            'bodyFields' => ['body'],
+        ]))->getIndexData($entry);
+
+        $this->assertSame('Headline 1 Headline 2 First. Second', $data['body']);
+    }
+
+    public function test_body_strips_soft_hyphens_and_normalises_spaces(): void
+    {
+        $entry = $this->makeEntry(
+            fieldValues: ['body' => 'value'],
+            layoutFields: [
+                'body' => $this->makeKeywordsField('body', "<p>Cus\u{00AD}to\u{00AD}di\u{00AD}an&nbsp;euismod &amp; more</p>"),
+            ],
+        );
+
+        $data = (new ConfigDrivenEntryIndexer('news', [
+            'bodyFields' => ['body'],
+        ]))->getIndexData($entry);
+
+        $this->assertSame('Custodian euismod & more', $data['body']);
     }
 }

@@ -34,9 +34,13 @@ final class ConfigDrivenAssetIndexer extends BaseAssetIndexer
         $updatedDate = $asset->dateUpdated?->getTimestamp();
         $filterYear = $asset->dateUpdated ? (int) $asset->dateUpdated->format('Y') : null;
 
-        // Build extra fields
+        // Build extra fields, skipping any not on this volume's field layout
+        // (getFieldValue() would throw)
         $extra = [];
         foreach ($this->config['extraFields'] ?? [] as $fieldHandle => $algoliaAttribute) {
+            if ($asset->getFieldLayout()?->getFieldByHandle($fieldHandle) === null) {
+                continue;
+            }
             $extra[$algoliaAttribute] = (string) $asset->getFieldValue($fieldHandle);
         }
 

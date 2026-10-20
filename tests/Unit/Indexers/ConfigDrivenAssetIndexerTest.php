@@ -29,15 +29,18 @@ class ConfigDrivenAssetIndexerTest extends IndexerTestCase
         $site = new Site();
         $site->language = $siteLanguage;
 
+        // The layout has a field for every value given
+        $layout = $this->makeFieldLayout($hasSearchableField, $this->layoutFieldsFor($fieldValues));
+
         return $this->make(Asset::class, [
             'id'             => $id,
             'title'          => $title,
             'dateUpdated'    => $dateUpdated ?? new \DateTime('2026-01-15'),
             'getVolume'      => $volume,
             'getSite'        => $site,
-            'getFieldLayout' => $this->makeFieldLayout($hasSearchableField),
+            'getFieldLayout' => $layout,
             'getUrl'         => $url,
-            'getFieldValue'  => fn(string $handle) => $fieldValues[$handle] ?? null,
+            'getFieldValue'  => $this->fieldValueGetter($layout, $fieldValues),
         ]);
     }
 
@@ -148,5 +151,20 @@ class ConfigDrivenAssetIndexerTest extends IndexerTestCase
         ]))->getIndexData($asset);
 
         $this->assertSame('7', $data['objectID']);
+    }
+
+    public function test_extra_field_not_on_layout_is_skipped_without_error(): void
+    {
+        $asset = $this->makeAsset(fieldValues: ['documentType' => 'report']);
+
+        $data = (new ConfigDrivenAssetIndexer('documents', [
+            'extraFields' => [
+                'documentType' => 'documentType',
+                'missing'      => 'missing',
+            ],
+        ]))->getIndexData($asset);
+
+        $this->assertSame('report', $data['documentType']);
+        $this->assertArrayNotHasKey('missing', $data);
     }
 }

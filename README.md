@@ -107,6 +107,8 @@ Index entries from one or more sections:
 | `dateField` | `string` | `'postDate'` | Which date field to use for `filterDate` and `filterYear` — useful for events with a custom event date field |
 | `extraFields` | `array` | `[]` | Map of `fieldHandle => algoliaAttribute` for additional scalar fields to include |
 
+Field handles are the handles **as they appear on the entry type's field layout**. If a field's handle is overridden on the layout (e.g. an `editorComponents` field added as `body`), use the overridden handle (`body`). Fields that aren't on an entry type's layout are skipped for entries of that type.
+
 #### Standard fields always indexed for entries
 
 `objectID`, `elementID`, `section`, `sectionHandle`, `title`, `url`, `postDate`, `filterDate`, `filterYear`, `body`, `siteID`, `siteHandle`
@@ -245,6 +247,9 @@ php craft resave/assets --volume=documents
 
 # Reindex all entries across all sections
 php craft resave/entries
+
+# Reindex a single entry (or a comma-separated list of IDs)
+php craft resave/entries --elementId=42
 ```
 
 ---

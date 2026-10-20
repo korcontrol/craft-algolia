@@ -39,16 +39,23 @@ final class ConfigDrivenEntryIndexer extends BaseEntryIndexer
             $filterDate = $postDate?->getTimestamp();
             $filterYear = $postDate ? (int) $postDate->format('Y') : null;
         } else {
-            $customDate = $entry->getFieldValue($dateField);
+            // Entry types in a section may not all have the date field
+            $customDate = $this->hasField($entry, $dateField)
+                ? $entry->getFieldValue($dateField)
+                : null;
             $filterDate = $customDate?->getTimestamp() ?? null;
             $filterYear = $customDate ? (int) $customDate->format('Y') : null;
         }
 
-        // Build body from bodyFields
+        // Build body from bodyFields. Fields missing from this entry type's
+        // layout are skipped (getFieldValue() would throw).
         $bodyParts = [];
         $bodyMode = $this->config['bodyMode'] ?? 'search';
         foreach ($this->config['bodyFields'] ?? [] as $fieldHandle) {
             if ($bodyMode === 'plaintext') {
+                if (!$this->hasField($entry, $fieldHandle)) {
+                    continue;
+                }
                 $value = $entry->getFieldValue($fieldHandle);
                 $bodyParts[] = $this->toPlainText((string) $value);
             } else {
@@ -57,9 +64,12 @@ final class ConfigDrivenEntryIndexer extends BaseEntryIndexer
         }
         $body = implode(' ', array_filter($bodyParts));
 
-        // Build extra fields
+        // Build extra fields, skipping any not on this entry type's layout
         $extra = [];
         foreach ($this->config['extraFields'] ?? [] as $fieldHandle => $algoliaAttribute) {
+            if (!$this->hasField($entry, $fieldHandle)) {
+                continue;
+            }
             $extra[$algoliaAttribute] = (string) $entry->getFieldValue($fieldHandle);
         }
 
