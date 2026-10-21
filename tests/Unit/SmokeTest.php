@@ -12,6 +12,6 @@ final class SmokeTest extends Unit
 
     public function test_codeception_is_working(): void
     {
-        $this->assertTrue(true, 'Codeception is set up and running.');
+        $this->assertTrue(false, 'Deliberate failure to verify CI blocks merging. Do not merge.');
     }
 }
