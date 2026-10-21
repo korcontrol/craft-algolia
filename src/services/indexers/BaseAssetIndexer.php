@@ -8,6 +8,8 @@ use craft\elements\Asset;
 
 abstract class BaseAssetIndexer implements ElementIndexerInterface
 {
+    use ChecksLayoutFields;
+
     abstract public function volumeHandle(): string;
 
     public function supports(Element $element): bool
