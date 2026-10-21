@@ -167,4 +167,21 @@ class ConfigDrivenAssetIndexerTest extends IndexerTestCase
         $this->assertSame('report', $data['documentType']);
         $this->assertArrayNotHasKey('missing', $data);
     }
+
+    public function test_warns_when_extra_field_is_not_on_volume_layout(): void
+    {
+        $asset = $this->makeAsset(fieldValues: ['documentType' => 'report']);
+
+        (new ConfigDrivenAssetIndexer('documents', [
+            'extraFields' => [
+                'documentType' => 'documentType',
+                'missing'      => 'missing',
+            ],
+        ]))->getIndexData($asset);
+
+        $warnings = $this->algoliaWarnings();
+        $this->assertCount(1, $warnings);
+        $this->assertStringContainsString('"missing" (extraFields)', $warnings[0]);
+        $this->assertStringContainsString('volume "documents"', $warnings[0]);
+    }
 }

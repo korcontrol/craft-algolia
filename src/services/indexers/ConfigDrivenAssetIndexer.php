@@ -38,7 +38,7 @@ final class ConfigDrivenAssetIndexer extends BaseAssetIndexer
         // (getFieldValue() would throw)
         $extra = [];
         foreach ($this->config['extraFields'] ?? [] as $fieldHandle => $algoliaAttribute) {
-            if ($asset->getFieldLayout()?->getFieldByHandle($fieldHandle) === null) {
+            if (!$this->hasField($asset, $fieldHandle, 'extraFields')) {
                 continue;
             }
             $extra[$algoliaAttribute] = (string) $asset->getFieldValue($fieldHandle);

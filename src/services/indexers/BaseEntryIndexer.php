@@ -8,6 +8,8 @@ use craft\elements\Entry;
 
 abstract class BaseEntryIndexer implements ElementIndexerInterface
 {
+    use ChecksLayoutFields;
+
     abstract public function sectionHandle(): string;
 
     public function supports(Element $element): bool
@@ -39,29 +41,18 @@ abstract class BaseEntryIndexer implements ElementIndexerInterface
         return true;
     }
 
-    /**
-     * Whether the entry's field layout has a field with this handle.
-     *
-     * Handles are layout handles, which may differ from the field's global
-     * handle (Craft 5 per-layout handle overrides).
-     */
-    protected function hasField(Entry $entry, string $fieldHandle): bool
-    {
-        return $entry->getFieldLayout()?->getFieldByHandle($fieldHandle) !== null;
-    }
-
     protected function getSearchKeywordsForField(
         Entry $entry,
         string $fieldHandle
     ): string {
+        if (!$this->hasField($entry, $fieldHandle, 'bodyFields')) {
+            return '';
+        }
+
         // Resolve via the entry's field layout so per-layout handle overrides
         // (Craft 5 multi-instance fields) work, matching getFieldValue() below.
         // The global Fields service only knows global handles.
-        $field = $entry->getFieldLayout()?->getFieldByHandle($fieldHandle);
-
-        if ($field === null) {
-            return '';
-        }
+        $field = $entry->getFieldLayout()->getFieldByHandle($fieldHandle);
 
         $value = $entry->getFieldValue($fieldHandle);
 
@@ -72,9 +63,15 @@ abstract class BaseEntryIndexer implements ElementIndexerInterface
 
     protected function toPlainText(string $html): string
     {
-        // Replace tags with a space so text in adjacent elements doesn't run
-        // together (e.g. "</h2><p>" would otherwise join two words)
-        $text = preg_replace('/<[^>]*>/', ' ', $html) ?? $html;
+        // Block-level tags and <br> become a space so adjacent blocks don't run
+        // together ("</h2><p>" would otherwise join two words). Inline tags
+        // (<em>, <strong>, <a>…) are stripped below without one, so words
+        // split by inline markup stay whole.
+        $text = preg_replace(
+            '/<\/?(?:address|article|aside|blockquote|br|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/i',
+            ' ',
+            $html
+        ) ?? $html;
         $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $text = strip_tags($text);
         $text = str_replace("\xC2\xA0", ' ', $text);

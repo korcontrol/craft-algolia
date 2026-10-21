@@ -40,7 +40,7 @@ final class ConfigDrivenEntryIndexer extends BaseEntryIndexer
             $filterYear = $postDate ? (int) $postDate->format('Y') : null;
         } else {
             // Entry types in a section may not all have the date field
-            $customDate = $this->hasField($entry, $dateField)
+            $customDate = $this->hasField($entry, $dateField, 'dateField')
                 ? $entry->getFieldValue($dateField)
                 : null;
             $filterDate = $customDate?->getTimestamp() ?? null;
@@ -53,7 +53,7 @@ final class ConfigDrivenEntryIndexer extends BaseEntryIndexer
         $bodyMode = $this->config['bodyMode'] ?? 'search';
         foreach ($this->config['bodyFields'] ?? [] as $fieldHandle) {
             if ($bodyMode === 'plaintext') {
-                if (!$this->hasField($entry, $fieldHandle)) {
+                if (!$this->hasField($entry, $fieldHandle, 'bodyFields')) {
                     continue;
                 }
                 $value = $entry->getFieldValue($fieldHandle);
@@ -67,7 +67,7 @@ final class ConfigDrivenEntryIndexer extends BaseEntryIndexer
         // Build extra fields, skipping any not on this entry type's layout
         $extra = [];
         foreach ($this->config['extraFields'] ?? [] as $fieldHandle => $algoliaAttribute) {
-            if (!$this->hasField($entry, $fieldHandle)) {
+            if (!$this->hasField($entry, $fieldHandle, 'extraFields')) {
                 continue;
             }
             $extra[$algoliaAttribute] = (string) $entry->getFieldValue($fieldHandle);

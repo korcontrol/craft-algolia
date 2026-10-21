@@ -24,14 +24,8 @@ class ConfigDrivenEntryIndexerTest extends IndexerTestCase
         array $fieldValues = [],
         bool $hasSearchableField = false,
         ?array $layoutFields = null,
+        array $otherEntryTypeFields = [],
     ): Entry {
-        $section = new Section();
-        $section->handle = $sectionHandle;
-        $section->name = $sectionName;
-
-        $entryType = new EntryType();
-        $entryType->handle = $entryTypeHandle;
-
         $site = new Site();
         $site->language = $siteLanguage;
 
@@ -40,6 +34,24 @@ class ConfigDrivenEntryIndexerTest extends IndexerTestCase
             $hasSearchableField,
             $layoutFields ?? $this->layoutFieldsFor($fieldValues),
         );
+
+        $entryType = $this->make(EntryType::class, [
+            'handle'         => $entryTypeHandle,
+            'getFieldLayout' => $layout,
+        ]);
+
+        // The section's entry types: this entry's, plus any others (each a list
+        // of field handles) for mixed-section scenarios
+        $entryTypes = [$entryType];
+        foreach ($otherEntryTypeFields as $i => $handles) {
+            $entryTypes[] = $this->makeEntryType("other{$i}", $handles);
+        }
+
+        $section = $this->make(Section::class, [
+            'handle'        => $sectionHandle,
+            'name'          => $sectionName,
+            'getEntryTypes' => $entryTypes,
+        ]);
 
         return $this->make(Entry::class, [
             'id'             => $id,
@@ -313,5 +325,99 @@ class ConfigDrivenEntryIndexerTest extends IndexerTestCase
         ]))->getIndexData($entry);
 
         $this->assertSame('Custodian euismod & more', $data['body']);
+    }
+
+    public function test_inline_tags_do_not_split_words(): void
+    {
+        $entry = $this->makeEntry(
+            fieldValues: ['body' => 'value'],
+            layoutFields: [
+                'body' => $this->makeKeywordsField('body', '<p>wo<em>r</em>d and <strong>bold</strong>text</p><p>Next<br>line</p>'),
+            ],
+        );
+
+        $data = (new ConfigDrivenEntryIndexer('news', [
+            'bodyFields' => ['body'],
+        ]))->getIndexData($entry);
+
+        $this->assertSame('word and boldtext Next line', $data['body']);
+    }
+
+    // Warnings for configured handles missing from every entry type (likely typos)
+
+    public function test_warns_when_extra_field_is_on_no_entry_type_in_section(): void
+    {
+        $entry = $this->makeEntry(fieldValues: ['cisionId' => '12345']);
+
+        (new ConfigDrivenEntryIndexer('news', [
+            'extraFields' => ['cisonId' => 'cisionId'],
+        ]))->getIndexData($entry);
+
+        $warnings = $this->algoliaWarnings();
+        $this->assertCount(1, $warnings);
+        $this->assertStringContainsString('"cisonId" (extraFields)', $warnings[0]);
+        $this->assertStringContainsString('section "news"', $warnings[0]);
+    }
+
+    public function test_warns_for_missing_search_mode_body_field(): void
+    {
+        (new ConfigDrivenEntryIndexer('news', [
+            'bodyFields' => ['missing'],
+        ]))->getIndexData($this->makeEntry());
+
+        $this->assertCount(1, $this->algoliaWarnings());
+        $this->assertStringContainsString('"missing" (bodyFields)', $this->algoliaWarnings()[0]);
+    }
+
+    public function test_warns_for_missing_plaintext_body_field(): void
+    {
+        (new ConfigDrivenEntryIndexer('news', [
+            'bodyFields' => ['missing'],
+            'bodyMode'   => 'plaintext',
+        ]))->getIndexData($this->makeEntry());
+
+        $this->assertCount(1, $this->algoliaWarnings());
+        $this->assertStringContainsString('"missing" (bodyFields)', $this->algoliaWarnings()[0]);
+    }
+
+    public function test_warns_for_missing_date_field(): void
+    {
+        (new ConfigDrivenEntryIndexer('news', [
+            'dateField' => 'eventDate',
+        ]))->getIndexData($this->makeEntry());
+
+        $this->assertCount(1, $this->algoliaWarnings());
+        $this->assertStringContainsString('"eventDate" (dateField)', $this->algoliaWarnings()[0]);
+    }
+
+    public function test_no_warning_when_another_entry_type_in_section_has_the_field(): void
+    {
+        // Mixed section: this entry type lacks `summary`, another one has it
+        $entry = $this->makeEntry(otherEntryTypeFields: [['summary']]);
+
+        $data = (new ConfigDrivenEntryIndexer('news', [
+            'extraFields' => ['summary' => 'summary'],
+            'bodyFields'  => ['summary'],
+        ]))->getIndexData($entry);
+
+        $this->assertArrayNotHasKey('summary', $data);
+        $this->assertSame([], $this->algoliaWarnings());
+    }
+
+    public function test_no_warning_when_configured_fields_are_present(): void
+    {
+        $entry = $this->makeEntry(
+            fieldValues: ['cisionId' => '12345', 'eventDate' => new \DateTime('2025-06-01')],
+            hasSearchableField: false,
+        );
+        $indexer = new ConfigDrivenEntryIndexer('news', [
+            'extraFields' => ['cisionId' => 'cisionId'],
+            'dateField'   => 'eventDate',
+        ]);
+
+        $indexer->shouldIndex($entry);
+        $indexer->getIndexData($entry);
+
+        $this->assertSame([], $this->algoliaWarnings());
     }
 }
