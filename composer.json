@@ -23,7 +23,7 @@
         "codeception/module-asserts": "^3",
         "codeception/module-filesystem": "^3",
         "codeception/module-yii2": "^1",
-        "craftcms/craft": "^5.0"
+        "vlucas/phpdotenv": "^5.4"
     },
     "extra": {
         "handle": "craft-algolia",
