@@ -11,34 +11,29 @@ class IndexElementJobTest extends Unit
 {
     protected UnitTester $tester;
 
-    private const QUEUED_AT = 1793000000;
-
     // shouldReschedule()
 
-    public function test_reschedules_when_element_was_saved_before_the_job_was_queued(): void
+    public function test_reschedules_when_job_is_the_latest_scheduled(): void
     {
-        $this->assertTrue(IndexElementJob::shouldReschedule(new \DateTime('@' . (self::QUEUED_AT - 60)), self::QUEUED_AT));
+        $this->assertTrue(IndexElementJob::shouldReschedule('abc', 'abc'));
     }
 
-    public function test_reschedules_when_element_was_saved_in_the_same_second(): void
+    public function test_does_not_reschedule_when_a_later_job_was_scheduled(): void
     {
-        // A save queues its job straight away, usually within the same second
-        $this->assertTrue(IndexElementJob::shouldReschedule(new \DateTime('@' . self::QUEUED_AT), self::QUEUED_AT));
+        // The later job carries the chain on
+        $this->assertFalse(IndexElementJob::shouldReschedule('abc', 'def'));
     }
 
-    public function test_does_not_reschedule_when_element_was_saved_since(): void
+    public function test_reschedules_when_no_latest_token_is_stored(): void
     {
-        // That save queued its own job, which carries the chain on
-        $this->assertFalse(IndexElementJob::shouldReschedule(new \DateTime('@' . (self::QUEUED_AT + 60)), self::QUEUED_AT));
+        // e.g. the cache was cleared; at worst a duplicate runs until the next
+        // scheduling supersedes it
+        $this->assertTrue(IndexElementJob::shouldReschedule('abc', null));
     }
 
-    public function test_reschedules_jobs_queued_before_queued_at_existed(): void
+    public function test_reschedules_jobs_queued_without_a_token(): void
     {
-        $this->assertTrue(IndexElementJob::shouldReschedule(new \DateTime('@' . (self::QUEUED_AT + 60)), null));
-    }
-
-    public function test_reschedules_when_element_has_no_date_updated(): void
-    {
-        $this->assertTrue(IndexElementJob::shouldReschedule(null, self::QUEUED_AT));
+        // Entry transition jobs queued before tokens existed
+        $this->assertTrue(IndexElementJob::shouldReschedule(null, 'def'));
     }
 }

@@ -20,10 +20,11 @@ final class IndexElementJob extends BaseJob
     public int $siteId;
 
     /**
-     * When the job was pushed (Unix time). Null for jobs queued before this
-     * was added.
+     * Identifies this job as the latest scheduled for its element and site
+     * (see IndexingService::reindexTokenKey()). Null for jobs queued before
+     * tokens were added.
      */
-    public ?int $queuedAt = null;
+    public ?string $token = null;
 
     public function execute($queue): void
     {
@@ -41,25 +42,28 @@ final class IndexElementJob extends BaseJob
 
         // Queue the follow-up job (a pending entry that just went live may
         // also carry an expiryDate; a recurring event needs its next top-up),
-        // unless a later save has already queued its own
-        if (self::shouldReschedule($element->dateUpdated, $this->queuedAt)) {
+        // unless a later save or resave has already queued its own
+        $latestToken = Craft::$app->getCache()->get(IndexingService::reindexTokenKey($this->elementId, $this->siteId));
+        if (self::shouldReschedule($this->token, $latestToken === false ? null : $latestToken)) {
             IndexingService::scheduleStatusTransitionJob($element, $algoliaConfig);
         }
     }
 
     /**
-     * Whether this job should queue the next one. Every save queues a job,
-     * and a recurring event's jobs re-queue indefinitely, so only the chain
-     * started by the latest save carries on: once the element has been saved
-     * after this job was queued, that save's job takes over.
+     * Whether this job should queue the next one. Every save (and resave)
+     * queues a job, and a recurring event's jobs re-queue indefinitely, so
+     * only the most recently scheduled job for the element and site carries
+     * the chain on. Without a stored token (e.g. after a cache clear) it
+     * carries on too: a duplicate chain at worst, until the next scheduling
+     * supersedes it.
      */
-    public static function shouldReschedule(?\DateTimeInterface $dateUpdated, ?int $queuedAt): bool
+    public static function shouldReschedule(?string $jobToken, ?string $latestToken): bool
     {
-        if ($queuedAt === null || $dateUpdated === null) {
+        if ($jobToken === null || $latestToken === null) {
             return true;
         }
 
-        return $dateUpdated->getTimestamp() <= $queuedAt;
+        return $jobToken === $latestToken;
     }
 
     protected function defaultDescription(): ?string

@@ -8,6 +8,7 @@ use craft\base\Element as BaseElement;
 use craft\elements\Entry;
 use craft\events\ModelEvent;
 use craft\helpers\ElementHelper;
+use craft\helpers\StringHelper;
 use korcontrol\craftalgolia\jobs\IndexElementJob;
 use korcontrol\craftalgolia\Plugin;
 use korcontrol\craftalgolia\services\indexers\ElementIndexerInterface;
@@ -67,14 +68,22 @@ final class IndexingService
         }
 
         $delay = max(0, $transitionDate->getTimestamp() - time()) + self::TRANSITION_DELAY_BUFFER;
+        $siteId = (int) $element->siteId;
+
+        $token = StringHelper::randomString(16);
 
         Craft::$app->getQueue()
             ->delay($delay)
             ->push(new IndexElementJob([
                 'elementId' => $elementId,
-                'siteId' => (int) $element->siteId,
-                'queuedAt' => time(),
+                'siteId' => $siteId,
+                'token' => $token,
             ]));
+
+        // Mark it as the latest job for the element and site, so earlier jobs
+        // stop re-scheduling (see IndexElementJob::shouldReschedule()). Set
+        // after the push: if the push fails, earlier chains carry on.
+        Craft::$app->getCache()->set(self::reindexTokenKey($elementId, $siteId), $token, 0);
 
         Craft::info(
             "[ALGOLIA] Queued re-index of element {$elementId} (site {$element->siteId}) in {$delay}s for status transition",
@@ -133,6 +142,15 @@ final class IndexingService
                 Craft::error('[ALGOLIA] saveObject error: ' . $e->getMessage(), __METHOD__);
             }
         }
+    }
+
+    /**
+     * Cache key holding the token of the latest re-index job scheduled for an
+     * element and site.
+     */
+    public static function reindexTokenKey(int $elementId, int $siteId): string
+    {
+        return "craft-algolia:reindex:{$elementId}:{$siteId}";
     }
 
     /**
