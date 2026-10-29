@@ -5,6 +5,7 @@ namespace korcontrol\craftalgolia\tests\Unit\Indexers;
 
 use craft\elements\Entry;
 use craft\models\Section;
+use korcontrol\craftalgolia\services\indexers\BaseSolspaceEventIndexer;
 use korcontrol\craftalgolia\services\indexers\ConfigDrivenAssetIndexer;
 use korcontrol\craftalgolia\services\indexers\ConfigDrivenEntryIndexer;
 use korcontrol\craftalgolia\services\indexers\ElementIndexerInterface;
@@ -114,5 +115,55 @@ class IndexerFactoryTest extends IndexerTestCase
         $this->assertCount(2, $indexers);
         $this->assertInstanceOf(ConfigDrivenEntryIndexer::class, $indexers[0]);
         $this->assertInstanceOf(ConfigDrivenAssetIndexer::class, $indexers[1]);
+    }
+
+    /**
+     * Class name of a custom Calendar event indexer for the "events" calendar,
+     * as a project would register it under `custom`.
+     */
+    private function eventsCalendarIndexerClass(): string
+    {
+        $indexer = new class extends BaseSolspaceEventIndexer {
+            public function calendarHandle(): string { return 'events'; }
+            public function getIndexData(Element $element): array { return $this->getStandardEventData($element); }
+        };
+
+        return get_class($indexer);
+    }
+
+    public function test_custom_event_indexer_is_returned_for_event_in_its_calendar(): void
+    {
+        $class = $this->eventsCalendarIndexerClass();
+        $factory = new IndexerFactory(['custom' => [$class]]);
+
+        $this->assertInstanceOf($class, $factory->getIndexerForElement($this->makeEvent()));
+    }
+
+    public function test_event_in_another_calendar_gets_no_indexer(): void
+    {
+        $factory = new IndexerFactory(['custom' => [$this->eventsCalendarIndexerClass()]]);
+        $event = $this->makeEvent(calendar: $this->makeCalendar('other', 'Other'));
+
+        $this->assertNull($factory->getIndexerForElement($event));
+    }
+
+    public function test_event_and_entry_indexers_resolve_side_by_side(): void
+    {
+        $class = $this->eventsCalendarIndexerClass();
+        $factory = new IndexerFactory([
+            'custom'  => [$class],
+            'entries' => ['news' => []],
+        ]);
+
+        $section = new Section();
+        $section->handle = 'news';
+        $entry = $this->make(Entry::class, [
+            'getStatus'      => Entry::STATUS_LIVE,
+            'getSection'     => $section,
+            'getFieldLayout' => $this->makeFieldLayout(),
+        ]);
+
+        $this->assertInstanceOf(ConfigDrivenEntryIndexer::class, $factory->getIndexerForElement($entry));
+        $this->assertInstanceOf($class, $factory->getIndexerForElement($this->makeEvent()));
     }
 }
