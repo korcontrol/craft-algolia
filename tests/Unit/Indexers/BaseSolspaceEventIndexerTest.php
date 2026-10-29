@@ -3,15 +3,28 @@ declare(strict_types=1);
 
 namespace korcontrol\craftalgolia\tests\Unit\Indexers;
 
+use Carbon\Carbon;
 use craft\base\Element;
 use craft\elements\Entry;
 use korcontrol\craftalgolia\services\indexers\BaseSolspaceEventIndexer;
 
 class BaseSolspaceEventIndexerTest extends IndexerTestCase
 {
-    private function indexer(string $calendarHandle = 'events'): BaseSolspaceEventIndexer
+    protected function _before(): void
     {
-        return new TestEventIndexer($calendarHandle);
+        parent::_before();
+        Carbon::setTestNow(new Carbon('2026-10-29 12:00:00', 'UTC'));
+    }
+
+    protected function _after(): void
+    {
+        Carbon::setTestNow();
+        parent::_after();
+    }
+
+    private function indexer(string $calendarHandle = 'events', ?int $occurrenceLimit = null): BaseSolspaceEventIndexer
+    {
+        return new TestEventIndexer($calendarHandle, $occurrenceLimit);
     }
 
     // supports()
@@ -167,6 +180,125 @@ class BaseSolspaceEventIndexerTest extends IndexerTestCase
         $this->assertSame('', $data['location']);
     }
 
+    // Recurrence fields
+
+    /**
+     * @return string[] Monthly start dates on the 10th at 09:00
+     */
+    private static function monthlyOn10th(string $from, int $months): array
+    {
+        $dates = [];
+        $date = new Carbon($from . ' 09:00:00', 'UTC');
+        for ($i = 0; $i < $months; $i++) {
+            $dates[] = $date->copy()->addMonthsNoOverflow($i)->format('Y-m-d H:i:s');
+        }
+        return $dates;
+    }
+
+    public function test_non_repeating_event_recurrence_fields(): void
+    {
+        $data = $this->indexer()->standardData($this->makeEvent(start: '2026-11-15 18:00:00', end: '2026-11-15 20:00:00'));
+
+        $this->assertFalse($data['repeats']);
+        $this->assertNull($data['repeatFrequency']);
+        $this->assertSame([self::ts('2026-11-15 18:00:00')], $data['occurrenceDates']);
+        $this->assertSame(self::ts('2026-11-15 20:00:00'), $data['lastDate']);
+    }
+
+    public function test_weekly_event_with_count(): void
+    {
+        $data = $this->indexer()->standardData($this->makeEvent(
+            start: '2026-11-03 10:00:00',
+            end: '2026-11-03 11:00:00',
+            freq: 'WEEKLY',
+            count: 6,
+            occurrences: ['2026-11-03 10:00:00', '2026-11-10 10:00:00', '2026-11-17 10:00:00', '2026-11-24 10:00:00', '2026-12-01 10:00:00', '2026-12-08 10:00:00'],
+        ));
+
+        $this->assertTrue($data['repeats']);
+        $this->assertSame('WEEKLY', $data['repeatFrequency']);
+        $this->assertSame(
+            array_map(self::ts(...), ['2026-11-03 10:00:00', '2026-11-10 10:00:00', '2026-11-17 10:00:00', '2026-11-24 10:00:00', '2026-12-01 10:00:00', '2026-12-08 10:00:00']),
+            $data['occurrenceDates'],
+        );
+        $this->assertSame(self::ts('2026-12-08 11:00:00'), $data['lastDate']);
+    }
+
+    public function test_until_event_last_date_is_end_of_last_occurrence_not_until(): void
+    {
+        // Calendar has already dropped the 2026-12-24 exception from its occurrences
+        $data = $this->indexer()->standardData($this->makeEvent(
+            start: '2026-12-10 14:00:00',
+            end: '2026-12-10 15:00:00',
+            freq: 'WEEKLY',
+            until: '2027-01-31 23:59:59',
+            occurrences: ['2026-12-10 14:00:00', '2026-12-17 14:00:00', '2026-12-31 14:00:00', '2027-01-07 14:00:00', '2027-01-28 14:00:00'],
+        ));
+
+        $this->assertSame(self::ts('2027-01-28 15:00:00'), $data['lastDate']);
+        $this->assertNotContains(self::ts('2026-12-24 14:00:00'), $data['occurrenceDates']);
+    }
+
+    public function test_forever_event_has_no_last_date_and_a_twelve_month_window(): void
+    {
+        $data = $this->indexer()->standardData($this->makeEvent(
+            start: '2026-09-10 09:00:00',
+            end: '2026-09-10 10:00:00',
+            freq: 'MONTHLY',
+            occurrences: self::monthlyOn10th('2026-09-10', 60),
+        ));
+
+        $this->assertNull($data['lastDate']);
+        // Past occurrences (Sep and Oct 2026) are left out; the window runs
+        // from today to 12 months ahead
+        $this->assertSame(array_map(self::ts(...), self::monthlyOn10th('2026-11-10', 12)), $data['occurrenceDates']);
+    }
+
+    public function test_occurrence_dates_are_capped_at_the_limit(): void
+    {
+        $data = $this->indexer(occurrenceLimit: 3)->standardData($this->makeEvent(
+            start: '2026-09-10 09:00:00',
+            end: '2026-09-10 10:00:00',
+            freq: 'MONTHLY',
+            occurrences: self::monthlyOn10th('2026-09-10', 60),
+        ));
+
+        $this->assertSame(array_map(self::ts(...), self::monthlyOn10th('2026-11-10', 3)), $data['occurrenceDates']);
+    }
+
+    public function test_select_dates_event_includes_its_original_start(): void
+    {
+        // Calendar's getOccurrences() returns only the select dates, not the
+        // event's own start
+        $data = $this->indexer()->standardData($this->makeEvent(
+            start: '2026-11-20 19:00:00',
+            end: '2026-11-20 21:00:00',
+            freq: 'SELECT_DATES',
+            occurrences: ['2026-12-11 19:00:00', '2027-01-15 19:00:00'],
+        ));
+
+        $this->assertTrue($data['repeats']);
+        $this->assertSame('SELECT_DATES', $data['repeatFrequency']);
+        $this->assertSame(
+            array_map(self::ts(...), ['2026-11-20 19:00:00', '2026-12-11 19:00:00', '2027-01-15 19:00:00']),
+            $data['occurrenceDates'],
+        );
+        $this->assertSame(self::ts('2027-01-15 21:00:00'), $data['lastDate']);
+    }
+
+    public function test_select_dates_event_whose_select_dates_are_all_past(): void
+    {
+        $data = $this->indexer()->standardData($this->makeEvent(
+            start: '2026-12-20 19:00:00',
+            end: '2026-12-20 21:00:00',
+            freq: 'SELECT_DATES',
+            occurrences: ['2026-08-01 19:00:00'],
+        ));
+
+        $this->assertSame([self::ts('2026-12-20 19:00:00')], $data['occurrenceDates']);
+        $this->assertSame(self::ts('2026-12-20 21:00:00'), $data['lastDate']);
+    }
+
     /**
      * The non-recurrence part of the record (recurrence fields are tested
      * separately).
@@ -182,8 +314,13 @@ class BaseSolspaceEventIndexerTest extends IndexerTestCase
  */
 final class TestEventIndexer extends BaseSolspaceEventIndexer
 {
-    public function __construct(private string $handle)
+    public function __construct(private string $handle, private ?int $limit = null)
     {
+    }
+
+    protected function occurrenceLimit(): int
+    {
+        return $this->limit ?? parent::occurrenceLimit();
     }
 
     public function calendarHandle(): string

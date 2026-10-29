@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace korcontrol\craftalgolia\services\indexers;
 
+use Carbon\Carbon;
 use craft\base\Element;
 use Solspace\Calendar\Elements\Event;
 
@@ -66,26 +67,117 @@ abstract class BaseSolspaceEventIndexer implements ElementIndexerInterface
         $postDate = $event->getPostDate();
 
         return [
-            'elementID'      => (string) $event->id,
-            'calendar'       => (string) $calendar->name,
-            'calendarHandle' => (string) $calendar->handle,
+            'elementID'       => (string) $event->id,
+            'calendar'        => (string) $calendar->name,
+            'calendarHandle'  => (string) $calendar->handle,
             // Same as calendar/calendarHandle, so facets on section work across
             // entries and events
-            'section'        => (string) $calendar->name,
-            'sectionHandle'  => (string) $calendar->handle,
-            'siteLanguage'   => $event->getSite()->language,
-            'title'          => (string) $event->title,
-            'url'            => (string) $event->getUrl(),
-            'postDate'       => $postDate?->getTimestamp(),
-            'startDate'      => $startDate->getTimestamp(),
-            'endDate'        => $endDate->getTimestamp(),
-            'allDay'         => $event->isAllDay(),
-            'filterDate'     => $startDate->getTimestamp(),
-            'filterYear'     => (int) $startDate->format('Y'),
-            'location'       => $this->getNominatedFieldText($event, $calendar->locationFieldHandle),
+            'section'         => (string) $calendar->name,
+            'sectionHandle'   => (string) $calendar->handle,
+            'siteLanguage'    => $event->getSite()->language,
+            'title'           => (string) $event->title,
+            'url'             => (string) $event->getUrl(),
+            'postDate'        => $postDate?->getTimestamp(),
+            'startDate'       => $startDate->getTimestamp(),
+            'endDate'         => $endDate->getTimestamp(),
+            'allDay'          => $event->isAllDay(),
+            'filterDate'      => $startDate->getTimestamp(),
+            'filterYear'      => (int) $startDate->format('Y'),
+            'location'        => $this->getNominatedFieldText($event, $calendar->locationFieldHandle),
             // Description goes in body so it's chunked like entry bodies
-            'body'           => $this->getNominatedFieldText($event, $calendar->descriptionFieldHandle),
+            'body'            => $this->getNominatedFieldText($event, $calendar->descriptionFieldHandle),
+            'repeats'         => $event->repeats(),
+            'repeatFrequency' => $event->getFrequency(),
+            'occurrenceDates' => $this->getUpcomingOccurrenceDates($event, $startDate),
+            'lastDate'        => $this->getLastDate($event, $startDate, $endDate)?->getTimestamp(),
         ];
+    }
+
+    /**
+     * How far ahead occurrenceDates looks, as a relative date string. Records
+     * aren't refreshed as time passes, so this only moves on when the event
+     * is saved again.
+     */
+    protected function occurrenceWindow(): string
+    {
+        return '+12 months';
+    }
+
+    /**
+     * Maximum number of occurrenceDates per record, to keep records small.
+     */
+    protected function occurrenceLimit(): int
+    {
+        return 100;
+    }
+
+    /**
+     * Start timestamps of the event's occurrences from today to the end of
+     * the window, so front ends can filter on upcoming dates. A non-repeating
+     * event has just its own start, past or not.
+     *
+     * Uses getOccurrences() only: getOccurrenceDatesBetween() resets a
+     * select-dates event's startDate to midnight in place.
+     *
+     * @return int[]
+     */
+    private function getUpcomingOccurrenceDates(Event $event, \DateTimeInterface $startDate): array
+    {
+        if (!$event->repeats()) {
+            return [$startDate->getTimestamp()];
+        }
+
+        $rangeStart = Carbon::now('UTC')->startOfDay();
+        $rangeEnd = Carbon::now('UTC')->modify($this->occurrenceWindow());
+
+        $dates = array_map(
+            fn(Event $occurrence) => $occurrence->getStartDate()->getTimestamp(),
+            $event->getOccurrences([
+                'rangeStart' => $rangeStart,
+                'rangeEnd'   => $rangeEnd,
+                'limit'      => $this->occurrenceLimit(),
+            ]),
+        );
+
+        // getOccurrences() leaves out a select-dates event's own start
+        if ($event->repeatsOnSelectDates() && $startDate >= $rangeStart && $startDate <= $rangeEnd) {
+            $dates[] = $startDate->getTimestamp();
+        }
+
+        $dates = array_values(array_unique($dates));
+        sort($dates);
+
+        return array_slice($dates, 0, $this->occurrenceLimit());
+    }
+
+    /**
+     * When the event's final occurrence ends, or null if it repeats forever.
+     */
+    private function getLastDate(Event $event, \DateTimeInterface $startDate, \DateTimeInterface $endDate): ?\DateTimeInterface
+    {
+        if (!$event->repeats()) {
+            return $endDate;
+        }
+
+        // Checked before the forever case: select-dates events have no
+        // count/until, so Calendar reports them as repeating forever
+        if (!$event->repeatsOnSelectDates() && $event->getUntilType() === Event::UNTIL_TYPE_FOREVER) {
+            return null;
+        }
+
+        // With no rangeEnd, a finite event's occurrences run to the end
+        $occurrences = $event->getOccurrences([
+            'rangeStart' => Carbon::instance($startDate)->startOfDay(),
+        ]);
+        $last = end($occurrences);
+
+        if ($last === false) {
+            return $endDate;
+        }
+
+        $lastEnd = $last->getEndDate();
+
+        return $lastEnd > $endDate ? $lastEnd : $endDate;
     }
 
     /**
