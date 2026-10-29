@@ -45,7 +45,7 @@ final class IndexElementJob extends BaseJob
         // unless a later save or resave has already queued its own
         $latestToken = Craft::$app->getCache()->get(IndexingService::reindexTokenKey($this->elementId, $this->siteId));
         if (self::shouldReschedule($this->token, $latestToken === false ? null : $latestToken)) {
-            IndexingService::scheduleStatusTransitionJob($element, $algoliaConfig);
+            IndexingService::scheduleReindexJob($element, $algoliaConfig);
         }
     }
 

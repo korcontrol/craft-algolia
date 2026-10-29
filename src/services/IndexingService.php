@@ -20,10 +20,11 @@ use yii\base\Event;
 final class IndexingService
 {
     /**
-     * Seconds added to a transition job's delay so it runs after the
-     * postDate/expiryDate has definitely passed, not a moment before.
+     * Seconds added to a re-index job's delay so it runs after the date it's
+     * for (postDate, expiryDate, an event's last indexed occurrence) has
+     * definitely passed, not a moment before.
      */
-    private const TRANSITION_DELAY_BUFFER = 30;
+    private const REINDEX_DELAY_BUFFER = 30;
 
     public static function handleAfterSaveEvent(ModelEvent $event, array $algoliaConfig = []): void
     {
@@ -42,7 +43,7 @@ final class IndexingService
         // A pending entry fails shouldIndex() today but must be indexed when
         // its postDate arrives; a live entry must be removed when it expires;
         // a recurring event's upcoming dates must be topped up.
-        self::scheduleStatusTransitionJob($element, $algoliaConfig);
+        self::scheduleReindexJob($element, $algoliaConfig);
     }
 
     /**
@@ -50,7 +51,7 @@ final class IndexingService
      * needs rebuilding (see getNextReindexDate()). Duplicate or stale jobs are
      * harmless: the job re-evaluates the element when it runs.
      */
-    public static function scheduleStatusTransitionJob(BaseElement $element, array $algoliaConfig = []): void
+    public static function scheduleReindexJob(BaseElement $element, array $algoliaConfig = []): void
     {
         $elementId = (int) ($element->id ?? 0);
         if ($elementId <= 0) {
@@ -67,7 +68,7 @@ final class IndexingService
             return;
         }
 
-        $delay = max(0, $transitionDate->getTimestamp() - time()) + self::TRANSITION_DELAY_BUFFER;
+        $delay = max(0, $transitionDate->getTimestamp() - time()) + self::REINDEX_DELAY_BUFFER;
         $siteId = (int) $element->siteId;
 
         $token = StringHelper::randomString(16);
@@ -86,7 +87,7 @@ final class IndexingService
         Craft::$app->getCache()->set(self::reindexTokenKey($elementId, $siteId), $token, 0);
 
         Craft::info(
-            "[ALGOLIA] Queued re-index of element {$elementId} (site {$element->siteId}) in {$delay}s for status transition",
+            "[ALGOLIA] Queued re-index of element {$elementId} (site {$element->siteId}) in {$delay}s",
             __METHOD__
         );
     }

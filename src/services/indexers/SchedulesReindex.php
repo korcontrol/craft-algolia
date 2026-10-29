@@ -8,7 +8,7 @@ use craft\base\Element;
 /**
  * Implemented by indexers whose records go out of date with time alone, with
  * no save to trigger a re-index. The plugin queues a delayed re-index for the
- * returned date (see IndexingService::scheduleStatusTransitionJob()).
+ * returned date (see IndexingService::scheduleReindexJob()).
  */
 interface SchedulesReindex
 {
