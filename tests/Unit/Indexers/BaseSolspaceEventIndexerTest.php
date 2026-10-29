@@ -78,6 +78,103 @@ class BaseSolspaceEventIndexerTest extends IndexerTestCase
 
         $this->assertFalse($this->indexer()->shouldIndex($event));
     }
+
+    // getStandardEventData()
+
+    private static function ts(string $utc): int
+    {
+        return (new \DateTimeImmutable($utc, new \DateTimeZone('UTC')))->getTimestamp();
+    }
+
+    public function test_standard_data_for_single_event(): void
+    {
+        $data = $this->indexer()->standardData($this->makeEvent(
+            id: 42,
+            calendar: $this->makeCalendar('events', 'Events'),
+            title: 'Evening Talk',
+            url: 'https://example.com/events/evening-talk',
+            siteLanguage: 'fr-CA',
+            start: '2026-11-15 18:00:00',
+            end: '2026-11-15 20:00:00',
+            postDate: '2026-10-01 09:00:00',
+        ));
+
+        $this->assertSame([
+            'elementID'      => '42',
+            'calendar'       => 'Events',
+            'calendarHandle' => 'events',
+            'section'        => 'Events',
+            'sectionHandle'  => 'events',
+            'siteLanguage'   => 'fr-CA',
+            'title'          => 'Evening Talk',
+            'url'            => 'https://example.com/events/evening-talk',
+            'postDate'       => self::ts('2026-10-01 09:00:00'),
+            'startDate'      => self::ts('2026-11-15 18:00:00'),
+            'endDate'        => self::ts('2026-11-15 20:00:00'),
+            'allDay'         => false,
+            'filterDate'     => self::ts('2026-11-15 18:00:00'),
+            'filterYear'     => 2026,
+            'location'       => '',
+            'body'           => '',
+        ], $this->standardFieldsOf($data));
+    }
+
+    public function test_all_day_event(): void
+    {
+        $data = $this->indexer()->standardData($this->makeEvent(
+            start: '2026-12-01 00:00:00',
+            end: '2026-12-03 23:59:59',
+            allDay: true,
+        ));
+
+        $this->assertTrue($data['allDay']);
+        $this->assertSame(self::ts('2026-12-03 23:59:59'), $data['endDate']);
+    }
+
+    public function test_null_post_date_and_url(): void
+    {
+        $data = $this->indexer()->standardData($this->makeEvent(url: null, postDate: null));
+
+        $this->assertNull($data['postDate']);
+        $this->assertSame('', $data['url']);
+    }
+
+    public function test_body_and_location_come_from_calendar_nominated_fields(): void
+    {
+        $event = $this->makeEvent(
+            calendar: $this->makeCalendar(descriptionFieldHandle: 'description', locationFieldHandle: 'venue'),
+            fieldValues: [
+                'description' => '<h2>Talk</h2><p>An <em>evening</em>&nbsp;talk.</p>',
+                'venue'       => 'Main Hall',
+            ],
+        );
+
+        $data = $this->indexer()->standardData($event);
+
+        $this->assertSame('Talk An evening talk.', $data['body']);
+        $this->assertSame('Main Hall', $data['location']);
+    }
+
+    public function test_nominated_fields_missing_from_layout_give_empty_strings(): void
+    {
+        $event = $this->makeEvent(
+            calendar: $this->makeCalendar(descriptionFieldHandle: 'description', locationFieldHandle: 'venue'),
+        );
+
+        $data = $this->indexer()->standardData($event);
+
+        $this->assertSame('', $data['body']);
+        $this->assertSame('', $data['location']);
+    }
+
+    /**
+     * The non-recurrence part of the record (recurrence fields are tested
+     * separately).
+     */
+    private function standardFieldsOf(array $data): array
+    {
+        return array_diff_key($data, array_flip(['repeats', 'repeatFrequency', 'occurrenceDates', 'lastDate']));
+    }
 }
 
 /**

@@ -15,6 +15,8 @@ use Solspace\Calendar\Elements\Event;
  */
 abstract class BaseSolspaceEventIndexer implements ElementIndexerInterface
 {
+    use ConvertsToPlainText;
+
     abstract public function calendarHandle(): string;
 
     public function supports(Element $element): bool
@@ -49,8 +51,59 @@ abstract class BaseSolspaceEventIndexer implements ElementIndexerInterface
         return (bool) $searchable;
     }
 
+    /**
+     * The fields every event record should have. Projects merge their own
+     * fields into this in getIndexData(). Dates are Unix timestamps (UTC).
+     */
     protected function getStandardEventData(Event $event): array
     {
-        return [];
+        $calendar = $event->getCalendar();
+
+        // Read dates before anything that computes occurrences: some Calendar
+        // occurrence methods modify the event's startDate in place
+        $startDate = $event->getStartDate();
+        $endDate = $event->getEndDate();
+        $postDate = $event->getPostDate();
+
+        return [
+            'elementID'      => (string) $event->id,
+            'calendar'       => (string) $calendar->name,
+            'calendarHandle' => (string) $calendar->handle,
+            // Same as calendar/calendarHandle, so facets on section work across
+            // entries and events
+            'section'        => (string) $calendar->name,
+            'sectionHandle'  => (string) $calendar->handle,
+            'siteLanguage'   => $event->getSite()->language,
+            'title'          => (string) $event->title,
+            'url'            => (string) $event->getUrl(),
+            'postDate'       => $postDate?->getTimestamp(),
+            'startDate'      => $startDate->getTimestamp(),
+            'endDate'        => $endDate->getTimestamp(),
+            'allDay'         => $event->isAllDay(),
+            'filterDate'     => $startDate->getTimestamp(),
+            'filterYear'     => (int) $startDate->format('Y'),
+            'location'       => $this->getNominatedFieldText($event, $calendar->locationFieldHandle),
+            // Description goes in body so it's chunked like entry bodies
+            'body'           => $this->getNominatedFieldText($event, $calendar->descriptionFieldHandle),
+        ];
+    }
+
+    /**
+     * Plain text of a field the calendar nominates (description, location),
+     * or '' when the calendar doesn't nominate one or it isn't on the layout.
+     */
+    private function getNominatedFieldText(Event $event, ?string $fieldHandle): string
+    {
+        if (!$fieldHandle || $event->getFieldLayout()?->getFieldByHandle($fieldHandle) === null) {
+            return '';
+        }
+
+        $value = $event->getFieldValue($fieldHandle);
+
+        if (!is_scalar($value) && !$value instanceof \Stringable) {
+            return '';
+        }
+
+        return $this->toPlainText((string) $value);
     }
 }
