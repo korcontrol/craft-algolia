@@ -299,6 +299,103 @@ class BaseSolspaceEventIndexerTest extends IndexerTestCase
         $this->assertSame(self::ts('2026-12-20 21:00:00'), $data['lastDate']);
     }
 
+    // getNextReindexDate()
+
+    /**
+     * @return string[] Start dates every $days days at $time from $from
+     */
+    private static function every(int $days, string $from, int $count, string $time): array
+    {
+        $dates = [];
+        $date = new Carbon("{$from} {$time}", 'UTC');
+        for ($i = 0; $i < $count; $i++) {
+            $dates[] = $date->copy()->addDays($i * $days)->format('Y-m-d H:i:s');
+        }
+        return $dates;
+    }
+
+    public function test_non_repeating_event_needs_no_reindex(): void
+    {
+        $this->assertNull($this->indexer()->getNextReindexDate($this->makeEvent()));
+    }
+
+    public function test_finite_event_fully_inside_the_window_needs_no_reindex(): void
+    {
+        $event = $this->makeEvent(
+            start: '2026-11-03 10:00:00',
+            end: '2026-11-03 11:00:00',
+            freq: 'WEEKLY',
+            count: 6,
+            occurrences: self::every(7, '2026-11-03', 6, '10:00:00'),
+        );
+
+        $this->assertNull($this->indexer()->getNextReindexDate($event));
+    }
+
+    public function test_forever_event_reindexes_at_its_last_indexed_occurrence(): void
+    {
+        $event = $this->makeEvent(
+            start: '2026-09-10 09:00:00',
+            end: '2026-09-10 10:00:00',
+            freq: 'MONTHLY',
+            occurrences: self::monthlyOn10th('2026-09-10', 60),
+        );
+
+        // 12 upcoming occurrences (Nov 2026 - Oct 2027); the last is 2027-10-10
+        $this->assertSame(self::ts('2027-10-10 09:00:00'), $this->indexer()->getNextReindexDate($event)?->getTimestamp());
+    }
+
+    public function test_event_capped_by_the_limit_reindexes_at_its_last_indexed_occurrence(): void
+    {
+        $event = $this->makeEvent(
+            start: '2026-10-01 09:00:00',
+            end: '2026-10-01 09:30:00',
+            freq: 'DAILY',
+            occurrences: self::every(1, '2026-10-01', 400, '09:00:00'),
+        );
+
+        // Limit 5 from today (2026-10-29): 10-29 .. 11-02
+        $this->assertSame(self::ts('2026-11-02 09:00:00'), $this->indexer(occurrenceLimit: 5)->getNextReindexDate($event)?->getTimestamp());
+    }
+
+    public function test_finite_event_running_past_the_window_reindexes_at_its_last_indexed_occurrence(): void
+    {
+        $event = $this->makeEvent(
+            start: '2026-11-05 14:00:00',
+            end: '2026-11-05 15:00:00',
+            freq: 'WEEKLY',
+            until: '2028-01-01 00:00:00',
+            occurrences: self::every(7, '2026-11-05', 61, '14:00:00'),
+        );
+
+        // The window ends 2027-10-29; the last Thursday in it is 2027-10-28
+        $this->assertSame(self::ts('2027-10-28 14:00:00'), $this->indexer()->getNextReindexDate($event)?->getTimestamp());
+    }
+
+    public function test_event_with_nothing_in_the_window_reindexes_when_the_window_moves_on(): void
+    {
+        $event = $this->makeEvent(
+            start: '2025-12-01 10:00:00',
+            end: '2025-12-01 12:00:00',
+            freq: 'YEARLY',
+            occurrences: ['2025-12-01 10:00:00', '2027-12-01 10:00:00', '2029-12-01 10:00:00'],
+        );
+
+        $this->assertSame(self::ts('2027-10-29 12:00:00'), $this->indexer()->getNextReindexDate($event)?->getTimestamp());
+    }
+
+    public function test_select_dates_event_with_no_dates_left_after_its_start_needs_no_reindex(): void
+    {
+        $event = $this->makeEvent(
+            start: '2026-12-20 19:00:00',
+            end: '2026-12-20 21:00:00',
+            freq: 'SELECT_DATES',
+            occurrences: ['2026-08-01 19:00:00'],
+        );
+
+        $this->assertNull($this->indexer()->getNextReindexDate($event));
+    }
+
     /**
      * The non-recurrence part of the record (recurrence fields are tested
      * separately).

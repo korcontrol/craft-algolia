@@ -14,7 +14,7 @@ use Solspace\Calendar\Elements\Event;
  * class unless a project extends it (via the `custom` config key), which only
  * makes sense on sites that have Calendar installed.
  */
-abstract class BaseSolspaceEventIndexer implements ElementIndexerInterface
+abstract class BaseSolspaceEventIndexer implements ElementIndexerInterface, SchedulesReindex
 {
     use ChecksLayoutFields;
     use ConvertsToPlainText;
@@ -95,9 +95,9 @@ abstract class BaseSolspaceEventIndexer implements ElementIndexerInterface
     }
 
     /**
-     * How far ahead occurrenceDates looks, as a relative date string. Records
-     * aren't refreshed as time passes, so this only moves on when the event
-     * is saved again.
+     * How far ahead occurrenceDates looks, as a relative date string. The
+     * record is rebuilt before its indexed dates run out (see
+     * getNextReindexDate()).
      */
     protected function occurrenceWindow(): string
     {
@@ -110,6 +110,46 @@ abstract class BaseSolspaceEventIndexer implements ElementIndexerInterface
     protected function occurrenceLimit(): int
     {
         return 100;
+    }
+
+    /**
+     * A repeating event's record runs out of upcoming dates as time passes,
+     * so rebuild it when its last indexed occurrence starts, as long as more
+     * occurrences follow. If none fall inside the window yet, look again when
+     * the window has moved on.
+     */
+    public function getNextReindexDate(Element $element): ?\DateTimeInterface
+    {
+        /** @var Event $event */
+        $event = $element;
+
+        if (!$event->repeats()) {
+            return null;
+        }
+
+        $startDate = $event->getStartDate();
+        $endDate = $event->getEndDate();
+        $dates = $this->getUpcomingOccurrenceDates($event, $startDate);
+        $lastDate = $this->getLastDate($event, $startDate, $endDate);
+        $now = Carbon::now('UTC');
+
+        if ($dates === []) {
+            if ($lastDate !== null && $lastDate <= $now) {
+                return null;
+            }
+
+            return $now->modify($this->occurrenceWindow());
+        }
+
+        $lastIndexedStart = Carbon::createFromTimestamp(max($dates), 'UTC');
+        $lastIndexedEnd = $lastIndexedStart->copy()->addSeconds($endDate->getTimestamp() - $startDate->getTimestamp());
+
+        // Every remaining occurrence is already indexed
+        if ($lastDate !== null && $lastDate <= $lastIndexedEnd) {
+            return null;
+        }
+
+        return $lastIndexedStart;
     }
 
     /**
