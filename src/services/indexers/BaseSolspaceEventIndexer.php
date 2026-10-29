@@ -16,6 +16,7 @@ use Solspace\Calendar\Elements\Event;
  */
 abstract class BaseSolspaceEventIndexer implements ElementIndexerInterface
 {
+    use ChecksLayoutFields;
     use ConvertsToPlainText;
 
     abstract public function calendarHandle(): string;
