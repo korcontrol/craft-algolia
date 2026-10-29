@@ -181,7 +181,7 @@ Fields that aren't on the calendar's field layout are skipped, with a warning in
 | `body` | Plain text of the calendar's **description field** (set in the calendar's settings), or of `bodyFields` when configured; chunked like entry bodies |
 | `location` | Plain text of the calendar's **location field** |
 | `repeats`, `repeatFrequency` | Whether the event repeats, and how: `DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY` or `SELECT_DATES` (`null` when it doesn't repeat) |
-| `occurrenceDates` | Unix start timestamps of occurrences from today up to 12 months ahead, at most 100 (override `occurrenceWindow()` / `occurrenceLimit()` to change). A non-repeating event has just its own start |
+| `occurrenceDates` | Unix start timestamps of occurrences from today up to 12 months ahead, at most 100 (override `occurrenceWindow()` / `occurrenceLimit()` to change), refreshed automatically as they run out. A non-repeating event has just its own start |
 | `lastDate` | When the final occurrence ends, or `null` for an event that repeats forever |
 
 `objectID`, `siteID` and `siteHandle` are added too, as for every record.
@@ -193,10 +193,11 @@ A recurring event is **one record per site**, not one per occurrence. Calendar s
 filters: `occurrenceDates >= ${startOfTodayTimestamp}`
 ```
 
-Records are only rebuilt when an event is saved. Past dates stay in `occurrenceDates` and new ones aren't added as time passes, so on sites with recurring events, resave events on a schedule (for example nightly) to keep the window current:
-```bash
-php craft calendar/events/resave
-```
+As time passes, a recurring event's indexed dates would run out, so the plugin rebuilds its record automatically: when the event's last indexed occurrence starts, a delayed queue job re-indexes it with the next set of dates and queues the following refresh. Between refreshes, past dates stay in `occurrenceDates`; they don't affect the filter above. This needs a queue that supports long delays (see [How Indexing Works](#how-indexing-works)).
+
+Finished events stay in the index, like old entries do; filter them out as above if you only want upcoming ones.
+
+Uninstalling Calendar doesn't remove its events' records from the index. Clear them first (e.g. delete the events, or `deleteBy` on `calendarHandle` after adding it as a filter-only facet), or clear the index and reindex.
 
 ---
 
@@ -365,7 +366,7 @@ php craft calendar/events/resave
 - **On delete** — all Algolia records for the element are removed across all sites
 - **Chunking** — if the `body` field content exceeds Algolia's record size limit, it is automatically split into multiple records with suffixed `objectID`s (e.g. `42-1-0`, `42-1-1`)
 - **Multi-site** — each site variant is indexed as a separate record with its own `objectID` (`elementId-siteId`), `siteID`, and `siteHandle`
-- **Scheduled entries** — an entry with a future post date is indexed when it goes live, and removed when its expiry date passes, via delayed queue jobs. Calendar events aren't scheduled this way (they have no such dates); see [Recurring events](#recurring-events)
+- **Scheduled re-indexing** — an entry with a future post date is indexed when it goes live, and removed when its expiry date passes; a recurring Calendar event is re-indexed before its indexed occurrence dates run out (see [Recurring events](#recurring-events)). Both use delayed queue jobs, so the queue must support long delays: Craft's default database queue and Redis queues do; Amazon SQS caps delays at 15 minutes
 
 ---
 
