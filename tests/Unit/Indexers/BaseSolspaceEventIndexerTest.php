@@ -384,6 +384,31 @@ class BaseSolspaceEventIndexerTest extends IndexerTestCase
         $this->assertSame(self::ts('2027-10-29 12:00:00'), $this->indexer()->getNextReindexDate($event)?->getTimestamp());
     }
 
+    public function test_event_whose_only_indexed_occurrence_is_earlier_today_reindexes_tomorrow(): void
+    {
+        // Every 18 months: today 09:00 (now is 12:00) is the only date in the window
+        $event = $this->makeEvent(
+            start: '2026-10-29 09:00:00',
+            end: '2026-10-29 10:00:00',
+            freq: 'MONTHLY',
+            occurrences: ['2026-10-29 09:00:00', '2028-04-29 09:00:00'],
+        );
+
+        $this->assertSame(self::ts('2026-10-30 00:00:00'), $this->indexer()->getNextReindexDate($event)?->getTimestamp());
+    }
+
+    public function test_select_dates_event_starting_earlier_today_reindexes_tomorrow(): void
+    {
+        $event = $this->makeEvent(
+            start: '2026-10-29 08:00:00',
+            end: '2026-10-29 09:00:00',
+            freq: 'SELECT_DATES',
+            occurrences: ['2028-01-01 08:00:00'],
+        );
+
+        $this->assertSame(self::ts('2026-10-30 00:00:00'), $this->indexer()->getNextReindexDate($event)?->getTimestamp());
+    }
+
     public function test_select_dates_event_with_no_dates_left_after_its_start_needs_no_reindex(): void
     {
         $event = $this->makeEvent(

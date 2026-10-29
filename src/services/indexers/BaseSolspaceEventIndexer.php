@@ -116,7 +116,8 @@ abstract class BaseSolspaceEventIndexer implements ElementIndexerInterface, Sche
      * A repeating event's record runs out of upcoming dates as time passes,
      * so rebuild it when its last indexed occurrence starts, as long as more
      * occurrences follow. If none fall inside the window yet, look again when
-     * the window has moved on.
+     * the window has moved on. Never earlier than tomorrow: the window starts
+     * at the beginning of today, so a refresh today would find the same dates.
      */
     public function getNextReindexDate(Element $element): ?\DateTimeInterface
     {
@@ -149,7 +150,7 @@ abstract class BaseSolspaceEventIndexer implements ElementIndexerInterface, Sche
             return null;
         }
 
-        return $lastIndexedStart;
+        return max($lastIndexedStart, $now->copy()->addDay()->startOfDay());
     }
 
     /**
