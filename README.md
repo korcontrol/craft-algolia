@@ -2,7 +2,7 @@
 
 A Craft CMS 5 plugin for config-driven Algolia search indexing.
 
-Supports entries and assets via a declarative config file, with a custom indexer escape hatch for complex cases.
+Supports entries and assets via a declarative config file, with a custom indexer escape hatch for complex cases, including [Solspace Calendar](https://plugins.craftcms.com/calendar) events.
 
 ---
 
@@ -143,7 +143,7 @@ Index assets from one or more volumes:
 
 ### The `searchable` Field
 
-If an entry or asset field layout contains a field with the handle `searchable` (a Lightswitch field), the plugin uses it as an opt-in gate. The element is only indexed if the field is enabled. If no `searchable` field exists on the layout, all elements are indexed by default.
+If an entry, asset or Calendar event field layout contains a field with the handle `searchable` (a Lightswitch field), the plugin uses it as an opt-in gate. The element is only indexed if the field is enabled. If no `searchable` field exists on the layout, all elements are indexed by default.
 
 ---
 
@@ -233,6 +233,77 @@ final class ReportsIndexer extends BaseAssetIndexer
 }
 ```
 
+#### Writing a Custom Calendar Event Indexer
+
+For sites using [Solspace Calendar](https://plugins.craftcms.com/calendar), extend `BaseSolspaceEventIndexer` and implement `calendarHandle()` and `getIndexData()`. Calendar is optional: the plugin doesn't require it, and this base class is only used when you extend it.
+```php
+<?php
+
+namespace mynamespace\indexers;
+
+use craft\base\Element;
+use korcontrol\craftalgolia\services\indexers\BaseSolspaceEventIndexer;
+use Solspace\Calendar\Elements\Event;
+
+final class EventsIndexer extends BaseSolspaceEventIndexer
+{
+    public function calendarHandle(): string
+    {
+        return 'events';
+    }
+
+    public function getIndexData(Element $element): array
+    {
+        /** @var Event $event */
+        $event = $element;
+
+        return array_merge($this->getStandardEventData($event), [
+            'organiser' => (string) $event->getFieldValue('organiser'),
+        ]);
+    }
+}
+```
+
+Register it under `custom`, one indexer per calendar:
+```php
+'custom' => [
+    \mynamespace\indexers\EventsIndexer::class,
+],
+```
+
+An event is indexed when it's enabled for the site and, if its calendar's field layout has a `searchable` field, that field is on. Calendar events have no pending or expired state, and their post date doesn't hide them, so neither affects indexing.
+
+##### Standard fields from `getStandardEventData()`
+
+| Attribute | Value |
+|-----------|-------|
+| `elementID`, `title`, `url`, `siteLanguage` | As for entries |
+| `calendar`, `calendarHandle` | The event's calendar name and handle |
+| `section`, `sectionHandle` | Also the calendar name and handle, so facets on `sectionHandle` work across entries and events |
+| `postDate` | Unix timestamp, or `null` |
+| `startDate`, `endDate` | Unix timestamps (UTC) of the event itself (its first occurrence, for recurring events) |
+| `allDay` | `true` for all-day events |
+| `filterDate`, `filterYear` | From `startDate` |
+| `body` | Plain text of the calendar's **description field** (set in the calendar's settings), chunked like entry bodies |
+| `location` | Plain text of the calendar's **location field** |
+| `repeats`, `repeatFrequency` | Whether the event repeats, and how: `DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY` or `SELECT_DATES` (`null` when it doesn't repeat) |
+| `occurrenceDates` | Unix start timestamps of occurrences from today up to 12 months ahead, at most 100 (override `occurrenceWindow()` / `occurrenceLimit()` to change). A non-repeating event has just its own start |
+| `lastDate` | When the final occurrence ends, or `null` for an event that repeats forever |
+
+`objectID`, `siteID` and `siteHandle` are added by the plugin, as for every record.
+
+##### Recurring events
+
+A recurring event is **one record per site**, not one per occurrence. Calendar stores it as a single element, and `occurrenceDates` lists its upcoming dates. Algolia matches a numeric filter on an array if any value matches, so to show upcoming events (including ones on today), filter on the start of today:
+```js
+filters: `occurrenceDates >= ${startOfTodayTimestamp}`
+```
+
+Records are only rebuilt when an event is saved. Past dates stay in `occurrenceDates` and new ones aren't added as time passes, so on sites with recurring events, resave events on a schedule (for example nightly) to keep the window current:
+```bash
+php craft calendar/events/resave
+```
+
 ---
 
 ## Reindexing
@@ -252,6 +323,11 @@ php craft resave/entries
 php craft resave/entries --elementId=42
 ```
 
+Calendar events have their own resave command:
+```bash
+php craft calendar/events/resave
+```
+
 ---
 
 ## How Indexing Works
@@ -260,6 +336,7 @@ php craft resave/entries --elementId=42
 - **On delete** — all Algolia records for the element are removed across all sites
 - **Chunking** — if the `body` field content exceeds Algolia's record size limit, it is automatically split into multiple records with suffixed `objectID`s (e.g. `42-1-0`, `42-1-1`)
 - **Multi-site** — each site variant is indexed as a separate record with its own `objectID` (`elementId-siteId`), `siteID`, and `siteHandle`
+- **Scheduled entries** — an entry with a future post date is indexed when it goes live, and removed when its expiry date passes, via delayed queue jobs. Calendar events aren't scheduled this way (they have no such dates); see [Recurring events](#recurring-events)
 
 ---
 
