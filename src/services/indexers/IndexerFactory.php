@@ -9,6 +9,9 @@ use Solspace\Calendar\Elements\Event;
 
 final class IndexerFactory
 {
+    /** Factories are built on every save, so the warning is logged once per request */
+    private static bool $warnedEventsConfigIgnored = false;
+
     private array $indexers;
 
     public function __construct(array $config = [])
@@ -58,10 +61,20 @@ final class IndexerFactory
                     $indexers[] = new ConfigDrivenEventIndexer($calendarHandle, $calendarConfig);
                 }
             } else {
-                Craft::warning('[ALGOLIA] The "events" config is ignored: Solspace Calendar is not installed.', __METHOD__);
+                self::warnEventsConfigIgnored();
             }
         }
 
         return $indexers;
+    }
+
+    public static function warnEventsConfigIgnored(): void
+    {
+        if (self::$warnedEventsConfigIgnored) {
+            return;
+        }
+
+        self::$warnedEventsConfigIgnored = true;
+        Craft::warning('[ALGOLIA] The "events" config is ignored: Solspace Calendar is not installed.', __METHOD__);
     }
 }

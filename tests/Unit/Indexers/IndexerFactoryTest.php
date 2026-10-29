@@ -206,4 +206,17 @@ class IndexerFactoryTest extends IndexerTestCase
 
         $this->assertInstanceOf($class, $factory->getIndexerForElement($this->makeEvent()));
     }
+
+    public function test_events_config_ignored_warning_is_logged_once_per_request(): void
+    {
+        (new \ReflectionProperty(IndexerFactory::class, 'warnedEventsConfigIgnored'))->setValue(null, false);
+
+        IndexerFactory::warnEventsConfigIgnored();
+        IndexerFactory::warnEventsConfigIgnored();
+
+        $this->assertSame(
+            ['[ALGOLIA] The "events" config is ignored: Solspace Calendar is not installed.'],
+            $this->algoliaWarnings(),
+        );
+    }
 }
