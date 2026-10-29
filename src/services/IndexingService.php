@@ -73,6 +73,7 @@ final class IndexingService
             ->push(new IndexElementJob([
                 'elementId' => $elementId,
                 'siteId' => (int) $element->siteId,
+                'queuedAt' => time(),
             ]));
 
         Craft::info(
