@@ -10,7 +10,9 @@ use craft\events\ModelEvent;
 use craft\helpers\ElementHelper;
 use korcontrol\craftalgolia\jobs\IndexElementJob;
 use korcontrol\craftalgolia\Plugin;
+use korcontrol\craftalgolia\services\indexers\ElementIndexerInterface;
 use korcontrol\craftalgolia\services\indexers\IndexerFactory;
+use korcontrol\craftalgolia\services\indexers\SchedulesReindex;
 use Throwable;
 use yii\base\Event;
 
@@ -37,21 +39,18 @@ final class IndexingService
         self::indexElement($element, $algoliaConfig);
 
         // A pending entry fails shouldIndex() today but must be indexed when
-        // its postDate arrives; a live entry must be removed when it expires.
+        // its postDate arrives; a live entry must be removed when it expires;
+        // a recurring event's upcoming dates must be topped up.
         self::scheduleStatusTransitionJob($element, $algoliaConfig);
     }
 
     /**
-     * Queues a delayed IndexElementJob for the element's next status
-     * transition (see getNextTransitionDate()). Duplicate or stale jobs are
-     * harmless: the job re-evaluates status when it runs.
+     * Queues a delayed IndexElementJob for when the element's record next
+     * needs rebuilding (see getNextReindexDate()). Duplicate or stale jobs are
+     * harmless: the job re-evaluates the element when it runs.
      */
     public static function scheduleStatusTransitionJob(BaseElement $element, array $algoliaConfig = []): void
     {
-        if (!$element instanceof Entry) {
-            return;
-        }
-
         $elementId = (int) ($element->id ?? 0);
         if ($elementId <= 0) {
             return;
@@ -61,11 +60,8 @@ final class IndexingService
             return;
         }
 
-        if ((new IndexerFactory($algoliaConfig))->getIndexerForElement($element) === null) {
-            return;
-        }
-
-        $transitionDate = self::getNextTransitionDate($element);
+        $indexer = (new IndexerFactory($algoliaConfig))->getIndexerForElement($element);
+        $transitionDate = self::getNextReindexDate($element, $indexer);
         if ($transitionDate === null) {
             return;
         }
@@ -136,6 +132,29 @@ final class IndexingService
                 Craft::error('[ALGOLIA] saveObject error: ' . $e->getMessage(), __METHOD__);
             }
         }
+    }
+
+    /**
+     * When the element's record next needs rebuilding without a save: an
+     * entry's next status transition, or the date its indexer asks for (e.g.
+     * a recurring Calendar event running out of indexed occurrence dates).
+     * Null when nothing indexes the element.
+     */
+    public static function getNextReindexDate(BaseElement $element, ?ElementIndexerInterface $indexer): ?\DateTimeInterface
+    {
+        if ($indexer === null) {
+            return null;
+        }
+
+        if ($element instanceof Entry) {
+            return self::getNextTransitionDate($element);
+        }
+
+        if ($indexer instanceof SchedulesReindex) {
+            return $indexer->getNextReindexDate($element);
+        }
+
+        return null;
     }
 
     /**
