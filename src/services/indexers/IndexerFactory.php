@@ -3,10 +3,15 @@ declare(strict_types=1);
 
 namespace korcontrol\craftalgolia\services\indexers;
 
+use Craft;
 use craft\base\Element;
+use Solspace\Calendar\Elements\Event;
 
 final class IndexerFactory
 {
+    /** Factories are built on every save, so the warning is logged once per request */
+    private static bool $warnedEventsConfigIgnored = false;
+
     private array $indexers;
 
     public function __construct(array $config = [])
@@ -48,6 +53,28 @@ final class IndexerFactory
             $indexers[] = new ConfigDrivenAssetIndexer($volumeHandle, $volumeConfig);
         }
 
+        // Config-driven Calendar event indexers. Calendar is optional, so the
+        // events key is ignored (with a warning) when it isn't installed.
+        if (!empty($config['events'])) {
+            if (class_exists(Event::class)) {
+                foreach ($config['events'] as $calendarHandle => $calendarConfig) {
+                    $indexers[] = new ConfigDrivenEventIndexer($calendarHandle, $calendarConfig);
+                }
+            } else {
+                self::warnEventsConfigIgnored();
+            }
+        }
+
         return $indexers;
+    }
+
+    public static function warnEventsConfigIgnored(): void
+    {
+        if (self::$warnedEventsConfigIgnored) {
+            return;
+        }
+
+        self::$warnedEventsConfigIgnored = true;
+        Craft::warning('[ALGOLIA] The "events" config is ignored: Solspace Calendar is not installed.', __METHOD__);
     }
 }

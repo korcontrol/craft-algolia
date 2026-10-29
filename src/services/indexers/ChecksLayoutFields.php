@@ -7,6 +7,7 @@ use Craft;
 use craft\base\Element;
 use craft\elements\Asset;
 use craft\elements\Entry;
+use Solspace\Calendar\Elements\Event;
 
 /**
  * Checks configured field handles against an element's field layout.
@@ -47,7 +48,8 @@ trait ChecksLayoutFields
     /**
      * A handle missing from one entry type is expected when a section mixes
      * entry types, so only treat it as a typo if no entry type in the section
-     * has it. Assets have a single layout per volume, so a miss always counts.
+     * has it. Assets and Calendar events have a single layout per volume or
+     * calendar, so a miss always counts.
      */
     private function isLikelyConfigTypo(Element $element, string $fieldHandle): bool
     {
@@ -76,6 +78,11 @@ trait ChecksLayoutFields
 
         if ($element instanceof Asset && ($volume = $element->getVolume()) !== null) {
             return sprintf('volume "%s"', $volume->handle);
+        }
+
+        // instanceof doesn't autoload, so this is safe when Calendar isn't installed
+        if ($element instanceof Event && $element->calendarId !== null) {
+            return sprintf('calendar "%s"', $element->getCalendar()->handle);
         }
 
         return $element::class;

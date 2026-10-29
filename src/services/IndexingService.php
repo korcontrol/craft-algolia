@@ -8,19 +8,23 @@ use craft\base\Element as BaseElement;
 use craft\elements\Entry;
 use craft\events\ModelEvent;
 use craft\helpers\ElementHelper;
+use craft\helpers\StringHelper;
 use korcontrol\craftalgolia\jobs\IndexElementJob;
 use korcontrol\craftalgolia\Plugin;
+use korcontrol\craftalgolia\services\indexers\ElementIndexerInterface;
 use korcontrol\craftalgolia\services\indexers\IndexerFactory;
+use korcontrol\craftalgolia\services\indexers\SchedulesReindex;
 use Throwable;
 use yii\base\Event;
 
 final class IndexingService
 {
     /**
-     * Seconds added to a transition job's delay so it runs after the
-     * postDate/expiryDate has definitely passed, not a moment before.
+     * Seconds added to a re-index job's delay so it runs after the date it's
+     * for (postDate, expiryDate, an event's last indexed occurrence) has
+     * definitely passed, not a moment before.
      */
-    private const TRANSITION_DELAY_BUFFER = 30;
+    private const REINDEX_DELAY_BUFFER = 30;
 
     public static function handleAfterSaveEvent(ModelEvent $event, array $algoliaConfig = []): void
     {
@@ -37,21 +41,18 @@ final class IndexingService
         self::indexElement($element, $algoliaConfig);
 
         // A pending entry fails shouldIndex() today but must be indexed when
-        // its postDate arrives; a live entry must be removed when it expires.
-        self::scheduleStatusTransitionJob($element, $algoliaConfig);
+        // its postDate arrives; a live entry must be removed when it expires;
+        // a recurring event's upcoming dates must be topped up.
+        self::scheduleReindexJob($element, $algoliaConfig);
     }
 
     /**
-     * Queues a delayed IndexElementJob for the element's next status
-     * transition (see getNextTransitionDate()). Duplicate or stale jobs are
-     * harmless: the job re-evaluates status when it runs.
+     * Queues a delayed IndexElementJob for when the element's record next
+     * needs rebuilding (see getNextReindexDate()). Duplicate or stale jobs are
+     * harmless: the job re-evaluates the element when it runs.
      */
-    public static function scheduleStatusTransitionJob(BaseElement $element, array $algoliaConfig = []): void
+    public static function scheduleReindexJob(BaseElement $element, array $algoliaConfig = []): void
     {
-        if (!$element instanceof Entry) {
-            return;
-        }
-
         $elementId = (int) ($element->id ?? 0);
         if ($elementId <= 0) {
             return;
@@ -61,26 +62,32 @@ final class IndexingService
             return;
         }
 
-        if ((new IndexerFactory($algoliaConfig))->getIndexerForElement($element) === null) {
-            return;
-        }
-
-        $transitionDate = self::getNextTransitionDate($element);
+        $indexer = (new IndexerFactory($algoliaConfig))->getIndexerForElement($element);
+        $transitionDate = self::getNextReindexDate($element, $indexer);
         if ($transitionDate === null) {
             return;
         }
 
-        $delay = max(0, $transitionDate->getTimestamp() - time()) + self::TRANSITION_DELAY_BUFFER;
+        $delay = max(0, $transitionDate->getTimestamp() - time()) + self::REINDEX_DELAY_BUFFER;
+        $siteId = (int) $element->siteId;
+
+        $token = StringHelper::randomString(16);
 
         Craft::$app->getQueue()
             ->delay($delay)
             ->push(new IndexElementJob([
                 'elementId' => $elementId,
-                'siteId' => (int) $element->siteId,
+                'siteId' => $siteId,
+                'token' => $token,
             ]));
 
+        // Mark it as the latest job for the element and site, so earlier jobs
+        // stop re-scheduling (see IndexElementJob::shouldReschedule()). Set
+        // after the push: if the push fails, earlier chains carry on.
+        Craft::$app->getCache()->set(self::reindexTokenKey($elementId, $siteId), $token, 0);
+
         Craft::info(
-            "[ALGOLIA] Queued re-index of element {$elementId} (site {$element->siteId}) in {$delay}s for status transition",
+            "[ALGOLIA] Queued re-index of element {$elementId} (site {$element->siteId}) in {$delay}s",
             __METHOD__
         );
     }
@@ -136,6 +143,38 @@ final class IndexingService
                 Craft::error('[ALGOLIA] saveObject error: ' . $e->getMessage(), __METHOD__);
             }
         }
+    }
+
+    /**
+     * Cache key holding the token of the latest re-index job scheduled for an
+     * element and site.
+     */
+    public static function reindexTokenKey(int $elementId, int $siteId): string
+    {
+        return "craft-algolia:reindex:{$elementId}:{$siteId}";
+    }
+
+    /**
+     * When the element's record next needs rebuilding without a save: an
+     * entry's next status transition, or the date its indexer asks for (e.g.
+     * a recurring Calendar event running out of indexed occurrence dates).
+     * Null when nothing indexes the element.
+     */
+    public static function getNextReindexDate(BaseElement $element, ?ElementIndexerInterface $indexer): ?\DateTimeInterface
+    {
+        if ($indexer === null) {
+            return null;
+        }
+
+        if ($element instanceof Entry) {
+            return self::getNextTransitionDate($element);
+        }
+
+        if ($indexer instanceof SchedulesReindex) {
+            return $indexer->getNextReindexDate($element);
+        }
+
+        return null;
     }
 
     /**

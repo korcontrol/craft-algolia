@@ -23,7 +23,11 @@
         "codeception/module-asserts": "^3",
         "codeception/module-filesystem": "^3",
         "codeception/module-yii2": "^1",
-        "vlucas/phpdotenv": "^5.4"
+        "vlucas/phpdotenv": "^5.4",
+        "solspace/craft-calendar": "^5.0"
+    },
+    "suggest": {
+        "solspace/craft-calendar": "Index Solspace Calendar events by extending BaseSolspaceEventIndexer"
     },
     "extra": {
         "handle": "craft-algolia",
