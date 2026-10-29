@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace korcontrol\craftalgolia\tests\Unit\Indexers;
 
+use craft\base\Element;
 use craft\elements\Entry;
 use korcontrol\craftalgolia\services\indexers\BaseSolspaceEventIndexer;
 
@@ -35,6 +36,47 @@ class BaseSolspaceEventIndexerTest extends IndexerTestCase
     public function test_does_not_support_non_event_element(): void
     {
         $this->assertFalse($this->indexer('events')->supports($this->make(Entry::class)));
+    }
+
+    // shouldIndex()
+
+    public function test_should_index_when_enabled_and_no_searchable_field(): void
+    {
+        $this->assertTrue($this->indexer()->shouldIndex($this->makeEvent()));
+    }
+
+    public function test_should_not_index_when_disabled(): void
+    {
+        // Also covers disabled-for-site: getStatus() reports both as disabled
+        $this->assertFalse($this->indexer()->shouldIndex($this->makeEvent(status: Element::STATUS_DISABLED)));
+    }
+
+    public function test_should_not_index_when_searchable_is_false(): void
+    {
+        $event = $this->makeEvent(fieldValues: ['searchable' => false], hasSearchableField: true);
+
+        $this->assertFalse($this->indexer()->shouldIndex($event));
+    }
+
+    public function test_should_not_index_when_searchable_is_null(): void
+    {
+        $event = $this->makeEvent(fieldValues: ['searchable' => null], hasSearchableField: true);
+
+        $this->assertFalse($this->indexer()->shouldIndex($event));
+    }
+
+    public function test_should_index_when_searchable_is_true(): void
+    {
+        $event = $this->makeEvent(fieldValues: ['searchable' => true], hasSearchableField: true);
+
+        $this->assertTrue($this->indexer()->shouldIndex($event));
+    }
+
+    public function test_should_not_index_disabled_event_even_when_searchable(): void
+    {
+        $event = $this->makeEvent(status: Element::STATUS_DISABLED, fieldValues: ['searchable' => true], hasSearchableField: true);
+
+        $this->assertFalse($this->indexer()->shouldIndex($event));
     }
 }
 

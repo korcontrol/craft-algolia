@@ -26,7 +26,27 @@ abstract class BaseSolspaceEventIndexer implements ElementIndexerInterface
 
     public function shouldIndex(Element $element): bool
     {
-        return true;
+        /** @var Event $event */
+        $event = $element;
+
+        // Events are only ever enabled or disabled (no pending/expired), and
+        // getStatus() also reports disabled-for-site as disabled. postDate
+        // doesn't hide events in Calendar, so it doesn't gate indexing either.
+        if ($event->getStatus() !== Element::STATUS_ENABLED) {
+            return false;
+        }
+
+        if ($event->getFieldLayout()?->getFieldByHandle('searchable') === null) {
+            return true;
+        }
+
+        $searchable = $event->getFieldValue('searchable');
+
+        if ($searchable === null) {
+            return false;
+        }
+
+        return (bool) $searchable;
     }
 
     protected function getStandardEventData(Event $event): array
