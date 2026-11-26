@@ -94,13 +94,16 @@ final class IndexingService
 
     /**
      * Deletes the element's objects from Algolia, then re-adds them if the
-     * element's indexer says it should currently be indexed. Idempotent, and
-     * re-evaluates status at call time — safe to re-run from a delayed queue
-     * job even if the element changed since the job was pushed.
+     * element's indexer says it should currently be indexed. Does nothing for
+     * an element no indexer covers. Idempotent, and re-evaluates status at
+     * call time — safe to re-run from a delayed queue job even if the element
+     * changed since the job was pushed.
+     *
+     * $client defaults to the plugin's client (tests pass their own).
      */
-    public static function indexElement(BaseElement $element, array $algoliaConfig = []): void
+    public static function indexElement(BaseElement $element, array $algoliaConfig = [], ?ClientService $client = null): void
     {
-        $client = Plugin::getInstance()->client;
+        $client ??= Plugin::getInstance()->client;
         if (!$client->isConfigured()) {
             return;
         }
@@ -113,15 +116,17 @@ final class IndexingService
             return;
         }
 
-        $siteId = (int) $element->siteId;
-
-        self::deleteByElementIdAndSiteId($client, $indexName, $elementId, $siteId);
-
+        // An element nothing indexes can't have records. Checking first keeps
+        // nested entries, assets etc. from each spending one of Algolia's 500
+        // deleteByQuery requests per hour per index.
         $indexer = (new IndexerFactory($algoliaConfig))->getIndexerForElement($element);
-
         if ($indexer === null) {
             return;
         }
+
+        $siteId = (int) $element->siteId;
+
+        self::deleteByElementIdAndSiteId($client, $indexName, $elementId, $siteId);
 
         if (!$indexer->shouldIndex($element)) {
             return;
