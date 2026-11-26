@@ -7,6 +7,7 @@ use Craft;
 use craft\base\Element as BaseElement;
 use craft\elements\Entry;
 use craft\events\ModelEvent;
+use craft\events\MoveEntryEvent;
 use craft\helpers\ElementHelper;
 use craft\helpers\StringHelper;
 use korcontrol\craftalgolia\jobs\IndexElementJob;
@@ -230,18 +231,54 @@ final class IndexingService
         }
 
         // See indexElement(): an element nothing indexes can't have records
-        try {
-            $indexed = (new IndexerFactory($algoliaConfig))->getIndexerForElement($element) !== null;
-        } catch (Throwable $e) {
-            Craft::warning('[ALGOLIA][DELETE] Indexer lookup failed, deleting anyway: ' . $e->getMessage(), __METHOD__);
-            $indexed = true;
-        }
-
-        if (!$indexed) {
+        if (self::isIndexed($element, $algoliaConfig) === false) {
             return;
         }
 
         self::deleteByElementId($client, $client->getIndex(), $elementId);
+    }
+
+    /**
+     * Craft's "Move to…" saves the entry in its new section, so if that
+     * section isn't indexed, the save sends nothing (see indexElement()) and
+     * records from the old section would be left behind. Deletes them. If the
+     * new section is indexed, the save already replaced them.
+     *
+     * $client defaults to the plugin's client (tests pass their own).
+     */
+    public static function handleAfterMoveToSection(MoveEntryEvent $event, array $algoliaConfig = [], ?ClientService $client = null): void
+    {
+        $client ??= Plugin::getInstance()->client;
+        if (!$client->isConfigured()) {
+            return;
+        }
+
+        $elementId = (int) ($event->entry->id ?? 0);
+        if ($elementId <= 0) {
+            return;
+        }
+
+        if (self::isIndexed($event->entry, $algoliaConfig) === true) {
+            return;
+        }
+
+        self::deleteByElementId($client, $client->getIndex(), $elementId);
+    }
+
+    /**
+     * Whether an indexer covers the element, or null when that can't be told
+     * because the lookup throws (e.g. Entry::getSection() for an entry deleted
+     * along with its section). Callers deciding whether to delete treat null
+     * as "delete".
+     */
+    private static function isIndexed(BaseElement $element, array $algoliaConfig): ?bool
+    {
+        try {
+            return (new IndexerFactory($algoliaConfig))->getIndexerForElement($element) !== null;
+        } catch (Throwable $e) {
+            Craft::warning('[ALGOLIA][DELETE] Indexer lookup failed, deleting anyway: ' . $e->getMessage(), __METHOD__);
+            return null;
+        }
     }
 
     private static function deleteByElementIdAndSiteId(

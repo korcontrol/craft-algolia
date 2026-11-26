@@ -10,6 +10,8 @@ use Algolia\AlgoliaSearch\Algolia;
 use Algolia\AlgoliaSearch\Http\Psr7\Response;
 use Craft;
 use craft\elements\Entry;
+use craft\events\MoveEntryEvent;
+use craft\models\Section;
 use korcontrol\craftalgolia\models\Settings;
 use korcontrol\craftalgolia\services\ClientService;
 use korcontrol\craftalgolia\services\IndexingService;
@@ -276,5 +278,33 @@ class IndexingServiceTest extends Unit
 
         $this->assertCount(1, $this->http->requests);
         $this->assertSame("elementID:'5'", $this->http->requests[0]['body']['filters']);
+    }
+
+    // handleAfterMoveToSection()
+
+    private function moveEvent(Entry $entry): MoveEntryEvent
+    {
+        return new MoveEntryEvent(['entry' => $entry, 'section' => new Section(['handle' => 'other'])]);
+    }
+
+    public function test_entry_moved_to_a_section_nothing_indexes_has_its_records_deleted(): void
+    {
+        // Its old section may have been indexed; the move's save no longer
+        // deletes records for an element no indexer covers
+        $entry = $this->make(Entry::class, ['id' => 5, 'siteId' => 1]);
+
+        IndexingService::handleAfterMoveToSection($this->moveEvent($entry), ['entries' => ['news' => []]], $this->makeClient());
+
+        $this->assertCount(1, $this->http->requests);
+        $this->assertStringEndsWith('/test-index/deleteByQuery', $this->http->requests[0]['path']);
+        $this->assertSame("elementID:'5'", $this->http->requests[0]['body']['filters']);
+    }
+
+    public function test_entry_moved_to_an_indexed_section_sends_no_request(): void
+    {
+        // The move's save already replaced its records
+        IndexingService::handleAfterMoveToSection($this->moveEvent($this->makeIndexedEntry()), $this->entriesOnlyConfig(), $this->makeClient());
+
+        $this->assertSame([], $this->http->requests);
     }
 }
