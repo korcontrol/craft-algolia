@@ -3,18 +3,39 @@ declare(strict_types=1);
 
 namespace korcontrol\craftalgolia\tests\Unit;
 
+use Algolia\AlgoliaSearch\Algolia;
+use Algolia\AlgoliaSearch\Http\Psr7\Response;
 use Codeception\Test\Unit;
+use Craft;
 use craft\base\Element;
 use craft\elements\Asset;
 use craft\elements\Entry;
-use korcontrol\craftalgolia\services\IndexingService;
+use craft\events\MoveEntryEvent;
+use craft\models\Section;
+use korcontrol\craftalgolia\models\Settings;
+use korcontrol\craftalgolia\services\ClientService;
 use korcontrol\craftalgolia\services\indexers\ElementIndexerInterface;
 use korcontrol\craftalgolia\services\indexers\SchedulesReindex;
+use korcontrol\craftalgolia\services\IndexingService;
+use korcontrol\craftalgolia\tests\Support\FakeAlgoliaHttpClient;
 use Tests\Support\UnitTester;
 
 class IndexingServiceTest extends Unit
 {
     protected UnitTester $tester;
+
+    private FakeAlgoliaHttpClient $http;
+
+    protected function _before(): void
+    {
+        $this->http = new FakeAlgoliaHttpClient();
+        Algolia::setHttpClient($this->http);
+    }
+
+    protected function _after(): void
+    {
+        Algolia::resetHttpClient();
+    }
 
     private function makeEntry(
         string $status = Entry::STATUS_LIVE,
@@ -138,5 +159,152 @@ class IndexingServiceTest extends Unit
         $entry = $this->makeEntry(Entry::STATUS_PENDING, postDate: new \DateTime('+2 days'));
 
         $this->assertNull(IndexingService::getNextReindexDate($entry, null));
+    }
+
+    // indexElement()
+
+    /** Built after the fake HTTP client is installed, so its SearchClient uses it */
+    private function makeClient(): ClientService
+    {
+        $settings = new Settings();
+        $settings->appId = 'test-app-id';
+        $settings->writeApiKey = 'test-write-key';
+        $settings->indexName = 'test-index';
+
+        return new ClientService($settings);
+    }
+
+    /**
+     * Config whose only indexer covers entries, indexing enabled ones. The
+     * factory builds custom indexers with `new $class()`, hence a class name.
+     */
+    private function entriesOnlyConfig(): array
+    {
+        $indexer = new class implements ElementIndexerInterface {
+            public function supports(Element $element): bool { return $element instanceof Entry; }
+            public function shouldIndex(Element $element): bool { return (bool) $element->enabled; }
+            public function getIndexData(Element $element): array { return ['title' => 'Test']; }
+        };
+
+        return ['custom' => [get_class($indexer)]];
+    }
+
+    private function makeIndexedEntry(bool $enabled = true): Entry
+    {
+        return $this->make(Entry::class, ['id' => 5, 'siteId' => 1, 'enabled' => $enabled]);
+    }
+
+    public function test_saving_an_element_without_an_indexer_sends_no_request(): void
+    {
+        $asset = $this->make(Asset::class, ['id' => 7, 'siteId' => 1]);
+
+        IndexingService::indexElement($asset, $this->entriesOnlyConfig(), $this->makeClient());
+
+        $this->assertSame([], $this->http->requests);
+    }
+
+    public function test_saving_an_element_with_no_indexers_configured_sends_no_request(): void
+    {
+        IndexingService::indexElement($this->makeIndexedEntry(), [], $this->makeClient());
+
+        $this->assertSame([], $this->http->requests);
+    }
+
+    public function test_saving_an_indexed_entry_deletes_its_records_then_saves_it(): void
+    {
+        IndexingService::indexElement($this->makeIndexedEntry(), $this->entriesOnlyConfig(), $this->makeClient());
+
+        $this->assertCount(2, $this->http->requests);
+        $this->assertStringEndsWith('/test-index/deleteByQuery', $this->http->requests[0]['path']);
+        $this->assertSame("elementID:'5' AND siteID=1", $this->http->requests[0]['body']['filters']);
+        $this->assertStringEndsWith('/test-index', $this->http->requests[1]['path']);
+        $this->assertSame('5-1', $this->http->requests[1]['body']['objectID']);
+    }
+
+    public function test_saving_an_indexed_entry_that_should_not_be_indexed_only_deletes_its_records(): void
+    {
+        IndexingService::indexElement($this->makeIndexedEntry(enabled: false), $this->entriesOnlyConfig(), $this->makeClient());
+
+        $this->assertCount(1, $this->http->requests);
+        $this->assertStringEndsWith('/deleteByQuery', $this->http->requests[0]['path']);
+    }
+
+    public function test_rate_limited_delete_is_logged_and_the_save_carries_on(): void
+    {
+        // Retry-After is 1s rather than Algolia's 3600 so that, without the
+        // fix, the test fails in seconds instead of hanging
+        $this->http->queue('deleteByQuery', new Response(429, ['Retry-After' => '1'], json_encode([
+            'message' => 'The rate-limit for deleteByQuery operations has been exceeded',
+            'status' => 429,
+        ])));
+        // The test app's logger (Codeception's Yii2 Logger) keeps the last few
+        // messages; clear them so only this save's are left
+        Craft::getLogger()->getAndClearLog();
+
+        IndexingService::indexElement($this->makeIndexedEntry(), $this->entriesOnlyConfig(), $this->makeClient());
+
+        $this->assertCount(1, $this->http->requestsTo('deleteByQuery'), 'the 429 must not be retried');
+        $this->assertCount(1, $this->http->requestsTo('/test-index'), 'the record must still be saved');
+        $this->assertStringContainsString('[ALGOLIA][DELETE] deleteBy error', Craft::getLogger()->getAndClearLog());
+    }
+
+    // removeElement()
+
+    public function test_deleting_an_element_without_an_indexer_sends_no_request(): void
+    {
+        $asset = $this->make(Asset::class, ['id' => 7, 'siteId' => 1]);
+
+        IndexingService::removeElement($asset, $this->entriesOnlyConfig(), $this->makeClient());
+
+        $this->assertSame([], $this->http->requests);
+    }
+
+    public function test_deleting_an_indexed_entry_deletes_its_records_in_every_site(): void
+    {
+        IndexingService::removeElement($this->makeIndexedEntry(), $this->entriesOnlyConfig(), $this->makeClient());
+
+        $this->assertCount(1, $this->http->requests);
+        $this->assertStringEndsWith('/test-index/deleteByQuery', $this->http->requests[0]['path']);
+        $this->assertSame("elementID:'5'", $this->http->requests[0]['body']['filters']);
+    }
+
+    public function test_deleting_an_entry_whose_indexer_lookup_fails_still_deletes_its_records(): void
+    {
+        // e.g. the entry's section was deleted with it: Entry::getSection()
+        // throws for an unknown section ID, so supports() can't answer
+        $entry = $this->make(Entry::class, ['id' => 5, 'siteId' => 1, 'sectionId' => 999999]);
+
+        IndexingService::removeElement($entry, ['entries' => ['news' => []]], $this->makeClient());
+
+        $this->assertCount(1, $this->http->requests);
+        $this->assertSame("elementID:'5'", $this->http->requests[0]['body']['filters']);
+    }
+
+    // handleAfterMoveToSection()
+
+    private function moveEvent(Entry $entry): MoveEntryEvent
+    {
+        return new MoveEntryEvent(['entry' => $entry, 'section' => new Section(['handle' => 'other'])]);
+    }
+
+    public function test_entry_moved_to_a_section_nothing_indexes_has_its_records_deleted(): void
+    {
+        // Its old section may have been indexed; the move's save no longer
+        // deletes records for an element no indexer covers
+        $entry = $this->make(Entry::class, ['id' => 5, 'siteId' => 1]);
+
+        IndexingService::handleAfterMoveToSection($this->moveEvent($entry), ['entries' => ['news' => []]], $this->makeClient());
+
+        $this->assertCount(1, $this->http->requests);
+        $this->assertStringEndsWith('/test-index/deleteByQuery', $this->http->requests[0]['path']);
+        $this->assertSame("elementID:'5'", $this->http->requests[0]['body']['filters']);
+    }
+
+    public function test_entry_moved_to_an_indexed_section_sends_no_request(): void
+    {
+        // The move's save already replaced its records
+        IndexingService::handleAfterMoveToSection($this->moveEvent($this->makeIndexedEntry()), $this->entriesOnlyConfig(), $this->makeClient());
+
+        $this->assertSame([], $this->http->requests);
     }
 }

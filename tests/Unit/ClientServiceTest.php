@@ -55,4 +55,13 @@ final class ClientServiceTest extends Unit
             $service->getWriteClient()
         );
     }
+
+    public function test_write_client_fails_on_the_first_rate_limit_response(): void
+    {
+        // Client 4.55+ otherwise sleeps out Retry-After (up to 3600s) on a 429,
+        // up to 3 times, which hangs the save that triggered the request
+        $client = (new ClientService($this->makeConfiguredSettings()))->getWriteClient();
+
+        $this->assertSame(0, $client->getClientConfig()->getMaxRateLimitRetries());
+    }
 }

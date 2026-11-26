@@ -8,6 +8,8 @@ use craft\base\Element;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
 use craft\events\ModelEvent;
+use craft\events\MoveEntryEvent;
+use craft\services\Entries;
 use korcontrol\craftalgolia\models\Settings;
 use korcontrol\craftalgolia\services\ClientService;
 use korcontrol\craftalgolia\services\IndexingService;
@@ -51,8 +53,16 @@ class Plugin extends BasePlugin
         Event::on(
             Element::class,
             Element::EVENT_AFTER_DELETE,
-            static function (Event $event) {
-                IndexingService::handleAfterDeleteEvent($event);
+            function (Event $event) use ($algoliaConfig) {
+                IndexingService::handleAfterDeleteEvent($event, $algoliaConfig);
+            }
+        );
+
+        Event::on(
+            Entries::class,
+            Entries::EVENT_AFTER_MOVE_TO_SECTION,
+            function (MoveEntryEvent $event) use ($algoliaConfig) {
+                IndexingService::handleAfterMoveToSection($event, $algoliaConfig);
             }
         );
     }
