@@ -365,8 +365,10 @@ php craft calendar/events/resave
 
 - **On save** — when a live entry, an asset, or an enabled Calendar event is saved, the plugin deletes any existing Algolia records for that element and site, then writes fresh records
 - **On delete** — all Algolia records for the element are removed across all sites
+- **Only indexed elements** — saves and deletes of elements no indexer covers (e.g. nested entries, users, assets in volumes that aren't configured) send nothing to Algolia
 - **Chunking** — if the `body` field content exceeds Algolia's record size limit, it is automatically split into multiple records with suffixed `objectID`s (e.g. `42-1-0`, `42-1-1`)
 - **Multi-site** — each site variant is indexed as a separate record with its own `objectID` (`elementId-siteId`), `siteID`, and `siteHandle`
+- **Rate limits** — each save or delete of an indexed element sends one `deleteBy` request, and Algolia allows 500 of these per hour per index. Past that limit, Algolia answers with a 429: the plugin logs `[ALGOLIA][DELETE] deleteBy error` and carries on, without waiting out the limit. Records that needed that delete stay in the index until the element is next saved: an entry that was disabled or expired, or extra `body` chunks when the body got shorter. Records being written are still written. When reindexing more than 500 indexed elements, spread the resave over more than an hour (e.g. one section at a time)
 - **Scheduled re-indexing** — an entry with a future post date is indexed when it goes live, and removed when its expiry date passes; a recurring Calendar event is re-indexed before its indexed occurrence dates run out (see [Recurring Calendar events](#recurring-calendar-events)). Both use delayed queue jobs, so the queue must support long delays: Craft's default database queue and Redis queues do; Amazon SQS caps delays at 15 minutes
 
 ---
