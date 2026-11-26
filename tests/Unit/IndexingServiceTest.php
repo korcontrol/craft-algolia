@@ -3,20 +3,20 @@ declare(strict_types=1);
 
 namespace korcontrol\craftalgolia\tests\Unit;
 
-use Codeception\Test\Unit;
-use craft\base\Element;
-use craft\elements\Asset;
 use Algolia\AlgoliaSearch\Algolia;
 use Algolia\AlgoliaSearch\Http\Psr7\Response;
+use Codeception\Test\Unit;
 use Craft;
+use craft\base\Element;
+use craft\elements\Asset;
 use craft\elements\Entry;
 use craft\events\MoveEntryEvent;
 use craft\models\Section;
 use korcontrol\craftalgolia\models\Settings;
 use korcontrol\craftalgolia\services\ClientService;
-use korcontrol\craftalgolia\services\IndexingService;
 use korcontrol\craftalgolia\services\indexers\ElementIndexerInterface;
 use korcontrol\craftalgolia\services\indexers\SchedulesReindex;
+use korcontrol\craftalgolia\services\IndexingService;
 use korcontrol\craftalgolia\tests\Support\FakeAlgoliaHttpClient;
 use Tests\Support\UnitTester;
 
