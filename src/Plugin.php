@@ -51,8 +51,8 @@ class Plugin extends BasePlugin
         Event::on(
             Element::class,
             Element::EVENT_AFTER_DELETE,
-            static function (Event $event) {
-                IndexingService::handleAfterDeleteEvent($event);
+            function (Event $event) use ($algoliaConfig) {
+                IndexingService::handleAfterDeleteEvent($event, $algoliaConfig);
             }
         );
     }

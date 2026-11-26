@@ -198,7 +198,7 @@ final class IndexingService
         };
     }
 
-    public static function handleAfterDeleteEvent(Event $event): void
+    public static function handleAfterDeleteEvent(Event $event, array $algoliaConfig = []): void
     {
         $element = $event->sender;
         Craft::info('[ALGOLIA] handleAfterDeleteEvent fired for element ID: ' . ($element->id ?? 'null'), __METHOD__);
@@ -206,7 +206,19 @@ final class IndexingService
             return;
         }
 
-        $client = Plugin::getInstance()->client;
+        self::removeElement($element, $algoliaConfig);
+    }
+
+    /**
+     * Deletes the element's objects from Algolia in every site, if an indexer
+     * covers the element. When that can't be told (the lookup throws, e.g. an
+     * entry deleted along with its section), it deletes anyway.
+     *
+     * $client defaults to the plugin's client (tests pass their own).
+     */
+    public static function removeElement(BaseElement $element, array $algoliaConfig = [], ?ClientService $client = null): void
+    {
+        $client ??= Plugin::getInstance()->client;
         if (!$client->isConfigured()) {
             return;
         }
@@ -214,6 +226,18 @@ final class IndexingService
         $elementId = (int) ($element->id ?? 0);
         if ($elementId <= 0) {
             Craft::warning('[ALGOLIA] Delete skipped: element has no id', __METHOD__);
+            return;
+        }
+
+        // See indexElement(): an element nothing indexes can't have records
+        try {
+            $indexed = (new IndexerFactory($algoliaConfig))->getIndexerForElement($element) !== null;
+        } catch (Throwable $e) {
+            Craft::warning('[ALGOLIA][DELETE] Indexer lookup failed, deleting anyway: ' . $e->getMessage(), __METHOD__);
+            $indexed = true;
+        }
+
+        if (!$indexed) {
             return;
         }
 

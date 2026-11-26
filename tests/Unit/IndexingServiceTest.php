@@ -224,4 +224,36 @@ class IndexingServiceTest extends Unit
         $this->assertCount(1, $this->http->requests);
         $this->assertStringEndsWith('/deleteByQuery', $this->http->requests[0]['path']);
     }
+
+    // removeElement()
+
+    public function test_deleting_an_element_without_an_indexer_sends_no_request(): void
+    {
+        $asset = $this->make(Asset::class, ['id' => 7, 'siteId' => 1]);
+
+        IndexingService::removeElement($asset, $this->entriesOnlyConfig(), $this->makeClient());
+
+        $this->assertSame([], $this->http->requests);
+    }
+
+    public function test_deleting_an_indexed_entry_deletes_its_records_in_every_site(): void
+    {
+        IndexingService::removeElement($this->makeIndexedEntry(), $this->entriesOnlyConfig(), $this->makeClient());
+
+        $this->assertCount(1, $this->http->requests);
+        $this->assertStringEndsWith('/test-index/deleteByQuery', $this->http->requests[0]['path']);
+        $this->assertSame("elementID:'5'", $this->http->requests[0]['body']['filters']);
+    }
+
+    public function test_deleting_an_entry_whose_indexer_lookup_fails_still_deletes_its_records(): void
+    {
+        // e.g. the entry's section was deleted with it: Entry::getSection()
+        // throws for an unknown section ID, so supports() can't answer
+        $entry = $this->make(Entry::class, ['id' => 5, 'siteId' => 1, 'sectionId' => 999999]);
+
+        IndexingService::removeElement($entry, ['entries' => ['news' => []]], $this->makeClient());
+
+        $this->assertCount(1, $this->http->requests);
+        $this->assertSame("elementID:'5'", $this->http->requests[0]['body']['filters']);
+    }
 }
