@@ -7,6 +7,8 @@ use Codeception\Test\Unit;
 use craft\base\Element;
 use craft\elements\Asset;
 use Algolia\AlgoliaSearch\Algolia;
+use Algolia\AlgoliaSearch\Http\Psr7\Response;
+use Craft;
 use craft\elements\Entry;
 use korcontrol\craftalgolia\models\Settings;
 use korcontrol\craftalgolia\services\ClientService;
@@ -223,6 +225,25 @@ class IndexingServiceTest extends Unit
 
         $this->assertCount(1, $this->http->requests);
         $this->assertStringEndsWith('/deleteByQuery', $this->http->requests[0]['path']);
+    }
+
+    public function test_rate_limited_delete_is_logged_and_the_save_carries_on(): void
+    {
+        // Retry-After is 1s rather than Algolia's 3600 so that, without the
+        // fix, the test fails in seconds instead of hanging
+        $this->http->queue('deleteByQuery', new Response(429, ['Retry-After' => '1'], json_encode([
+            'message' => 'The rate-limit for deleteByQuery operations has been exceeded',
+            'status' => 429,
+        ])));
+        // The test app's logger (Codeception's Yii2 Logger) keeps the last few
+        // messages; clear them so only this save's are left
+        Craft::getLogger()->getAndClearLog();
+
+        IndexingService::indexElement($this->makeIndexedEntry(), $this->entriesOnlyConfig(), $this->makeClient());
+
+        $this->assertCount(1, $this->http->requestsTo('deleteByQuery'), 'the 429 must not be retried');
+        $this->assertCount(1, $this->http->requestsTo('/test-index'), 'the record must still be saved');
+        $this->assertStringContainsString('[ALGOLIA][DELETE] deleteBy error', Craft::getLogger()->getAndClearLog());
     }
 
     // removeElement()
